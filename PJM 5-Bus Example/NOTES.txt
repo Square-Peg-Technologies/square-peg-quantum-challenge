@@ -1,0 +1,39 @@
+PJM 5-Bus Example — Notes
+=========================
+
+Generators
+----------
+The three generators are taken directly from the IonQ/ORNL unit commitment paper
+(arXiv:2505.00145, Table I) and placed on the PJM 5-bus network topology from
+MATPOWER case5.m:
+
+  Unit 0 @ Bus 1: p_min=100 MW, p_max=600 MW, cost b=$10/MWh
+  Unit 1 @ Bus 3: p_min=100 MW, p_max=400 MW, cost b=$8/MWh
+  Unit 2 @ Bus 5: p_min= 50 MW, p_max=200 MW, cost b=$6/MWh
+
+The original paper uses quadratic costs F(p) = a*p^2 + b*p + c. The DCOPF
+framework only supports linear costs, so only the incremental term b is used
+here. The fixed no-load cost c and efficiency curve term a are ignored.
+
+Economic Dispatch vs Unit Commitment
+-------------------------------------
+pjm5_cost.py runs economic dispatch, not unit commitment. The difference:
+
+- Economic dispatch (what this script does): all generators are assumed to be
+  ON at every time step. The solver only decides how much each one produces to
+  meet demand at minimum cost, subject to line flow limits and generator limits.
+
+- Unit commitment (what the uc_quantum_tutorial notebook does): the solver also
+  decides which generators to turn ON or OFF at each time step using binary
+  variables. This adds startup/shutdown costs and minimum up/down time constraints.
+  The combinatorial nature of the binary decisions is what makes it interesting
+  for quantum optimization.
+
+Because all generators are always ON here, the p_min constraints are always
+enforced. Unit 2 at Bus 5 is the cheapest generator ($6/MWh) and will be
+dispatched to its 200 MW ceiling in most hours. This frequently saturates the
+line 4-5 limit (240 MW), creating congestion and LMP separation between those
+two buses — which is the main economic phenomenon this network illustrates.
+
+To do proper unit commitment on this network, the binary on/off decisions and
+quadratic costs from the paper would need to be added on top of the DCOPF layer.
