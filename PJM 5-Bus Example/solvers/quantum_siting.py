@@ -235,6 +235,8 @@ def run_vqa_qiskit(
     for bs_ordered, cost in ranked:
         u_bits = bs_ordered[:n_qubits_gen]
         s_bits = bs_ordered[n_qubits_gen:]
+        if all(b == "0" for b in u_bits):
+            continue
         candidates.append((u_bits, s_bits, cost))
         if len(candidates) >= n_candidates:
             break
@@ -279,6 +281,9 @@ def run_dwave_sa(
         if sum(int(b) for b in s_bits) != B:
             continue
 
+        if all(b == "0" for b in u_bits):
+            continue
+
         key = u_bits + s_bits
         if key in seen:
             continue
@@ -313,6 +318,7 @@ def evaluate_candidates(
     from solvers.uc import run_uc
 
     results = []
+    seen_bat_locs: set[tuple] = set()
 
     for u_bits, s_bits, _proxy_cost in candidates:
         # Decode battery locations: bus indices (1-indexed) where s_i == 1
@@ -321,6 +327,13 @@ def evaluate_candidates(
 
         # Decode generator commitment
         commitment = [int(b) for b in u_bits]
+
+        # For UC, same bat_locs always produces the same result — skip duplicates
+        bat_locs_key = tuple(bat_locs.values())
+        if second_stage == "uc":
+            if bat_locs_key in seen_bat_locs:
+                continue
+            seen_bat_locs.add(bat_locs_key)
 
         try:
             if second_stage == "ed":

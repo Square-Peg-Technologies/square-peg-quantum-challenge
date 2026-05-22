@@ -152,17 +152,42 @@ def print_quantum_results(result: "QuantumSitingResult") -> None:
         print("No feasible candidates found.")
         return
 
-    print(f"\n{'Rank':<6} {'Bat Placement':<20} {'Commitment':<16} {'True Cost ($)':>16}")
-    print("-" * 62)
+    is_uc = result.second_stage == "uc"
     sorted_evals = sorted(result.evaluated, key=lambda x: x[2])
-    for rank, (bat_locs, commitment, true_cost, _) in enumerate(sorted_evals, start=1):
-        bat_str = str(tuple(bat_locs.values()))
-        commit_str = "".join("1" if c else "0" for c in commitment)
-        print(f"{rank:<6} {bat_str:<20} {commit_str:<16} {true_cost:>16,.0f}")
 
-    best_locs, best_commit, best_cost, _ = result.best
+    if is_uc:
+        print(f"\n{'Rank':<6} {'Bat Placement':<20} {'True Cost ($)':>16}")
+        print("-" * 44)
+        for rank, (bat_locs, _commit, true_cost, _res) in enumerate(sorted_evals, start=1):
+            bat_str = str(tuple(bat_locs.values()))
+            print(f"{rank:<6} {bat_str:<20} {true_cost:>16,.0f}")
+    else:
+        print(f"\n{'Rank':<6} {'Bat Placement':<20} {'Commitment':<16} {'True Cost ($)':>16}")
+        print("-" * 62)
+        for rank, (bat_locs, commitment, true_cost, _res) in enumerate(sorted_evals, start=1):
+            bat_str = str(tuple(bat_locs.values()))
+            commit_str = "".join("1" if c else "0" for c in commitment)
+            print(f"{rank:<6} {bat_str:<20} {commit_str:<16} {true_cost:>16,.0f}")
+
+    best_locs, best_commit, best_cost, best_res = result.best
     print(f"\nBest placement: buses {tuple(best_locs.values())}, cost ${best_cost:,.0f}")
-    print(f"Best commitment: {['ON' if c else 'OFF' for c in best_commit]}")
+
+    if is_uc:
+        commitment_matrix = best_res.commitment  # shape (G, T)
+        G, T = commitment_matrix.shape
+        gen_names = [f"Unit {g}" for g in range(G)]
+        print("Commitment schedule (UC re-optimised per hour):")
+        header = f"  {'Hour':>4} | " + " | ".join(f"{n:>8}" for n in gen_names)
+        print(header)
+        print("  " + "-" * (len(header) - 2))
+        for t in range(T):
+            row = " | ".join(
+                f"{'ON' if commitment_matrix[g, t] > 0.5 else 'OFF':>8}"
+                for g in range(G)
+            )
+            print(f"  {t + 1:>4} | {row}")
+    else:
+        print(f"Best commitment: {['ON' if c else 'OFF' for c in best_commit]}")
 
 
 def print_results(
