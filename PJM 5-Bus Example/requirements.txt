@@ -8,6 +8,12 @@
 #   echo "<path-to-repo>/Tutorial/Quantum Network Flow Diagrams" \
 #     > .venv/lib/python3.11/site-packages/dcopf_local.pth
 
+# Quantum
+qiskit>=1.0.0
+qiskit-aer>=0.14.0
+dimod>=0.12.0
+dwave-samplers>=1.3.0
+
 # Optimisation
 cvxpy==1.8.2
 highspy==1.14.0

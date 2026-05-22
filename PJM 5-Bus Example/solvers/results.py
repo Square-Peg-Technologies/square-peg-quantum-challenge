@@ -30,3 +30,15 @@ class UCResult:
 class SitingResult:
     ranking: list[tuple]    # [(bus_pair, total_cost, UCResult), ...]
     infeasible: list[tuple]  # [(bus_a, bus_b), ...] placements with no valid schedule
+
+
+@dataclass
+class QuantumSitingResult:
+    backend: str                   # "qiskit" | "dwave"
+    second_stage: str              # "ed" | "uc"
+    n_candidates: int
+    quantum_candidates: list       # [(u_bits, s_bits, proxy_cost), ...]
+    evaluated: list                # [(bat_locs, commitment, true_cost, result_obj), ...]
+    best: tuple                    # entry in evaluated with minimum true_cost
+    runtime_quantum: float         # seconds
+    runtime_classical: float       # seconds

@@ -4,7 +4,7 @@ import os
 import sys
 import time
 
-from solvers.results import UCResult, SitingResult
+from solvers.results import UCResult, SitingResult, QuantumSitingResult
 
 
 def prompt_optimization() -> int:
@@ -13,10 +13,11 @@ def prompt_optimization() -> int:
         print("  1. Economic Dispatch (ED)")
         print("  2. Unit Commitment (UC)")
         print("  3. Battery Siting (exhaustive search)")
+        print("  4. Quantum Siting (Hybrid VQA + Classical)")
         raw = input("Enter number: ").strip()
-        if raw in ("1", "2", "3"):
+        if raw in ("1", "2", "3", "4"):
             return int(raw)
-        print("Invalid selection. Please enter 1, 2, or 3.")
+        print("Invalid selection. Please enter 1, 2, 3, or 4.")
 
 
 def prompt_hours() -> int:
@@ -92,6 +93,77 @@ def print_header(
     print("=============================================")
 
 
+def prompt_quantum_options() -> tuple[str, int, str]:
+    """Prompt for backend, n_candidates, and second_stage. Returns (backend, n_candidates, second_stage)."""
+    while True:
+        print("Select quantum backend:")
+        print("  1. Qiskit (VQA, local simulator)")
+        print("  2. D-Wave (Simulated Annealing)")
+        raw = input("Enter number: ").strip()
+        if raw == "1":
+            backend = "qiskit"
+            break
+        elif raw == "2":
+            backend = "dwave"
+            break
+        print("Invalid selection. Please enter 1 or 2.")
+
+    while True:
+        raw = input("How many candidates to evaluate classically? [default: 10]: ").strip()
+        if raw == "":
+            n_candidates = 10
+            break
+        try:
+            n_candidates = int(raw)
+            if n_candidates >= 1:
+                break
+        except ValueError:
+            pass
+        print("Invalid input. Please enter a positive integer.")
+
+    while True:
+        print("Second-stage solver:")
+        print("  1. ED dispatch (fix commitment and placement)")
+        print("  2. Full UC re-solve (fix placement only)")
+        raw = input("Enter number: ").strip()
+        if raw == "1":
+            second_stage = "ed"
+            break
+        elif raw == "2":
+            second_stage = "uc"
+            break
+        print("Invalid selection. Please enter 1 or 2.")
+
+    return backend, n_candidates, second_stage
+
+
+def print_quantum_results(result: "QuantumSitingResult") -> None:
+    backend_label = "Qiskit VQA" if result.backend == "qiskit" else "D-Wave SA"
+    stage_label = "ED" if result.second_stage == "ed" else "UC"
+
+    print(f"\nQuantum Siting Results ({backend_label} + {stage_label} refinement)")
+    print(f"Quantum candidates found:   {len(result.quantum_candidates)}")
+    print(f"Candidates evaluated:       {len(result.evaluated)}")
+    print(f"Runtime — quantum sieve:    {result.runtime_quantum:.1f}s")
+    print(f"Runtime — classical stage:  {result.runtime_classical:.1f}s")
+
+    if not result.evaluated:
+        print("No feasible candidates found.")
+        return
+
+    print(f"\n{'Rank':<6} {'Bat Placement':<20} {'Commitment':<16} {'True Cost ($)':>16}")
+    print("-" * 62)
+    sorted_evals = sorted(result.evaluated, key=lambda x: x[2])
+    for rank, (bat_locs, commitment, true_cost, _) in enumerate(sorted_evals, start=1):
+        bat_str = str(tuple(bat_locs.values()))
+        commit_str = "".join("1" if c else "0" for c in commitment)
+        print(f"{rank:<6} {bat_str:<20} {commit_str:<16} {true_cost:>16,.0f}")
+
+    best_locs, best_commit, best_cost, _ = result.best
+    print(f"\nBest placement: buses {tuple(best_locs.values())}, cost ${best_cost:,.0f}")
+    print(f"Best commitment: {['ON' if c else 'OFF' for c in best_commit]}")
+
+
 def print_results(
     result,
     opt_name: str,
@@ -99,6 +171,10 @@ def print_results(
     generators: list,
     batteries: list,
 ) -> None:
+    if isinstance(result, QuantumSitingResult):
+        print_quantum_results(result)
+        return
+
     if isinstance(result, SitingResult):
         print("\nBattery Siting Results (ranked by total cost):")
         print(f"{'Rank':<6} {'Bus Pair':<12} {'Total Cost ($)':>16} {'Congested Hrs':>14}")
@@ -207,6 +283,9 @@ def main():
     )
 
     opt = prompt_optimization()
+    quantum_opts = None
+    if opt == 4:
+        quantum_opts = prompt_quantum_options()
     T = prompt_hours()
     assets_file_name, assets_mod = prompt_assets()
 
@@ -225,7 +304,7 @@ def main():
     gen_locs = loc_mod.GENERATOR_LOCATIONS
     bat_locs = loc_mod.BATTERY_LOCATIONS
 
-    opt_names = {1: "ED", 2: "UC", 3: "Siting"}
+    opt_names = {1: "ED", 2: "UC", 3: "Siting", 4: "Quantum Siting"}
     opt_name = opt_names[opt]
 
     print_header(opt_name, T, assets_file_name, generators, batteries)
@@ -234,14 +313,26 @@ def main():
     from solvers.ed import run_ed
     from solvers.uc import run_uc
     from solvers.siting import run_siting
+    from solvers.quantum_siting import run_quantum_siting
 
     t_start = time.perf_counter()
     if opt == 1:
         result = run_ed(grid, generators, batteries, gen_locs, bat_locs, T)
     elif opt == 2:
         result = run_uc(grid, generators, batteries, bat_locs, T)
-    else:
+    elif opt == 3:
         result = run_siting(grid, generators, batteries, T)
+    else:
+        backend, n_candidates, second_stage = quantum_opts
+        result = run_quantum_siting(
+            grid=grid,
+            generators=generators,
+            batteries=batteries,
+            T=T,
+            backend=backend,
+            n_candidates=n_candidates,
+            second_stage=second_stage,
+        )
     elapsed = time.perf_counter() - t_start
 
     if elapsed < 60:
@@ -252,9 +343,11 @@ def main():
     print(f"Solver time: {time_str}")
 
     print_results(result, opt_name, T, generators, batteries)
-    save_plot(result, opt_name, T, assets_file_name, grid=grid)
-    if not isinstance(result, SitingResult):
+    if not isinstance(result, (SitingResult, QuantumSitingResult)):
+        save_plot(result, opt_name, T, assets_file_name, grid=grid)
         save_overview(result, opt_name, T, assets_file_name, generators, batteries, grid)
+    elif isinstance(result, SitingResult):
+        save_plot(result, opt_name, T, assets_file_name, grid=grid)
 
 
 if __name__ == "__main__":
