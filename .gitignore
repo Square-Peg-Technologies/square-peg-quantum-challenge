@@ -1,0 +1,5 @@
+.venv/
+tests/
+Constitution/
+__pycache__/
+*.pyc
