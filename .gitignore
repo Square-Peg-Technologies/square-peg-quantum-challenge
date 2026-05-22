@@ -1,6 +1,7 @@
 .venv/
-tests/
 Constitution/
 .claude/
 __pycache__/
 *.pyc
+.pytest_cache/
+.mypy_cache/

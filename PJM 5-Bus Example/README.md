@@ -1,17 +1,16 @@
-# PJM 5-Bus Classical Baseline
+# PJM 5-Bus Quantum-Classical Siting Solver
 
-Classical baseline solver for a quantum battery siting problem on the PJM 5-bus
-test grid. Implements three levels of power system optimization — Economic Dispatch,
-Unit Commitment, and Battery Siting — all including battery storage. This is the
-reference solution that a future quantum algorithm will partially replace.
+Hybrid quantum-classical solver for battery siting on the PJM 5-bus test grid.
+Implements four levels of power system optimization — Economic Dispatch, Unit
+Commitment, Battery Siting, and Quantum Siting — all including battery storage.
 
-Based on the IonQ/ORNL unit commitment paper (arXiv:2505.00145) and the MATPOWER
-case5 network (Li & Bo, 2010 IEEE PES General Meeting).
+Based on the IonQ/ORNL hybrid quantum-classical algorithm (arXiv:2505.00145) and
+the MATPOWER case5 network (Li & Bo, 2010 IEEE PES General Meeting).
 
 
 ## What It Does
 
-The tool runs one of three optimizations on the PJM 5-bus grid over 1 to 24 hours:
+The tool runs one of four optimizations on the PJM 5-bus grid over 1 to 24 hours:
 
 1. Economic Dispatch (ED): All generators stay on. Finds the least-cost output
    for each generator each hour, subject to line flow limits and battery storage
@@ -23,10 +22,21 @@ The tool runs one of three optimizations on the PJM 5-bus grid over 1 to 24 hour
 
 3. Battery Siting: Tries every combination of 2 buses out of 5 for placing the
    two batteries (10 combinations total). Runs a full UC solve for each placement
-   and ranks all combinations by total system cost. This is the layer targeted for
-   quantum acceleration in future work.
+   and ranks all combinations by total system cost.
 
-All three modes use a DC power flow approximation (no reactive power, no losses).
+4. Quantum Siting: Hybrid quantum-classical algorithm. A quantum sieve searches
+   the joint (generator commitment, battery placement) space using a cheap proxy
+   cost function, producing a ranked shortlist of candidates. Each candidate is
+   then evaluated with a classical solver (ED or UC) to find the true best
+   solution. Implements the approach from arXiv:2505.00145.
+
+   Two quantum backends are supported:
+   - Qiskit VQA: Butterfly ansatz circuit optimized with COBYLA on a local
+     statevector simulator. Compatible with IonQ Forte gate hardware.
+   - D-Wave Simulated Annealing: QUBO formulation sampled with
+     SimulatedAnnealingSampler. No QPU connection required.
+
+All modes use a DC power flow approximation (no reactive power, no losses).
 
 
 ## The Grid
@@ -58,13 +68,13 @@ Lines and flow limits (MW):
     6       4-5        350 MW  (constrained)
 
 Lines 1-2 and 4-5 are the only constrained lines. The limits were increased from
-the original MATPOWER values (400 MW and 240 MW) so that congestion occurs only
-under high-output scenarios, keeping the siting results informative.
+the original MATPOWER values so that congestion occurs only under high-output
+scenarios, keeping the siting results informative.
 
 Demand profile: 24-hour load shape calibrated to match the IonQ/ORNL paper demand
-range (arXiv:2505.00145 Table IV: loads 170-1100 MW). Total system load spans 170 MW
-(deep night, hour 0) to 1100 MW (midday peak, hour 11). Bus split is 30%/30%/40%
-across Buses 2/3/4 (MATPOWER case5 proportions).
+range (arXiv:2505.00145 Table IV: loads 170-1100 MW). Total system load spans
+170 MW (deep night, hour 0) to 1100 MW (midday peak, hour 11). Bus split is
+30%/30%/40% across Buses 2/3/4.
 
     Hours 0-5:   170-300 MW  (Unit 2 only — Units 0 and 1 off)
     Hours 6-8:   450-800 MW  (Units 1+2 — Unit 0 still off)
@@ -105,14 +115,14 @@ Batteries can only charge or discharge in a given hour, not both simultaneously.
 SOC evolves each hour: SOC[t] = SOC[t-1] + efficiency * charge[t] - discharge[t].
 
 Default placements (used by ED and UC): Bus 2 and Bus 4.
-Battery Siting mode ignores the defaults and searches all 10 bus pair combinations.
+Battery Siting and Quantum Siting search for optimal placements automatically.
 
 
 ## Running the Tool
 
     .venv/bin/python main.py
 
-The program prompts for three inputs, then runs and prints results.
+The program prompts for inputs, then runs and prints results.
 
 ### Selection Menu
 
@@ -122,6 +132,21 @@ Step 1 — choose the optimization:
       1. Economic Dispatch (ED)
       2. Unit Commitment (UC)
       3. Battery Siting (exhaustive search)
+      4. Quantum Siting (Hybrid VQA + Classical)
+    Enter number:
+
+For option 4, three additional sub-prompts appear before the hours/assets prompts:
+
+    Select quantum backend:
+      1. Qiskit (VQA, local simulator)
+      2. D-Wave (Simulated Annealing)
+    Enter number:
+
+    How many candidates to evaluate classically? [default: 10]:
+
+    Second-stage solver:
+      1. ED dispatch (fix commitment and placement)
+      2. Full UC re-solve (fix placement only)
     Enter number:
 
 Step 2 — choose the number of hours (1-24):
@@ -134,52 +159,71 @@ Step 3 — choose the assets file (scanned from the current directory):
       1. assets.py
     Select a file (enter number):
 
-All prompts loop on invalid input with a short error message. The program never
-crashes on bad input.
+All prompts loop on invalid input. The program never crashes on bad input.
 
-### Example Session
+### Example Session (Quantum Siting)
 
-    Select optimization to run:
-      1. Economic Dispatch (ED)
-      2. Unit Commitment (UC)
-      3. Battery Siting (exhaustive search)
-    Enter number: 2
-
-    How many hours to simulate? (1-24): 8
-
-    Available assets files:
-      1. assets.py
+    Select optimization to run: 4
+    Select quantum backend: 2
+    How many candidates to evaluate classically? [default: 10]: 5
+    Second-stage solver: 1
+    How many hours to simulate? (1-24): 4
     Select a file (enter number): 1
 
-    =============================================
-    Run: UC | Hours: 8 | Assets: assets.py
-    Generators: {Unit 0 (Bus 1, 100-600 MW, a=0.002, b=$10, c=$500)}
-                {Unit 1 (Bus 3, 100-400 MW, a=0.0025, b=$8, c=$300)}
-                {Unit 2 (Bus 5,  50-200 MW, a=0.005, b=$6, c=$100)}
-    Batteries:  {Bat 0 (50 MW / 200 MWh)}, {Bat 1 (50 MW / 200 MWh)}
-    =============================================
+    Quantum Siting Results (D-Wave SA + ED refinement)
+    Quantum candidates found:   5
+    Candidates evaluated:       5
+    Runtime — quantum sieve:    0.3s
+    Runtime — classical stage:  0.3s
 
-    Running UC optimization for T=8 hours...
-
-    UC Results:
-    Hour |     Cost ($) |     Unit 0 |     Unit 1 |     Unit 2 | Commit | ... | Congested
+    Rank   Bat Placement        Commitment       True Cost ($)
+    ------------------------------------------------------------------
+    1      (1, 2)               011                     14,430
     ...
+
+    Best placement: buses (1, 2), cost $14,430
+    Best commitment: ['OFF', 'ON', 'ON']
+
+
+## Quantum Siting — How It Works
+
+The proxy cost function Q(u, s) is evaluated lazily on the classical device from
+a sampled bitstring, avoiding any Pauli Hamiltonian decomposition (see reference
+[12] in arXiv:2505.00145):
+
+    Q(u, s) = c_min(u) + λ1 × P_budget(s) + λ2 × P_infeas(u, s)
+
+    c_min(u)      Lower-bound dispatch cost for committed generators.
+    P_budget(s)   Penalises anything other than exactly B batteries placed.
+    P_infeas(u,s) Penalises combinations that cannot meet peak demand.
+
+Qubit encoding: [u_0 ... u_{G-1}  s_0 ... s_{N-1}]
+  G = number of generators (3 for default assets)
+  N = number of buses (5 for PJM 5-bus)
+  Total qubits: G + N = 8
+
+All counts (G, N, B) are read from the loaded assets at runtime — nothing is
+hardcoded, so alternative asset files with different fleet sizes work automatically.
+
+Qiskit VQA path:
+  Butterfly ansatz (L=3 layers, O(L log N) depth), COBYLA optimization,
+  512 shots per iteration, up to 300 iterations, 5000-shot final extraction.
+
+D-Wave path:
+  Full QUBO with all linear, u-u, s-s, and cross u-s interaction terms.
+  SimulatedAnnealingSampler, num_reads = max(2000, 10 × n_candidates).
 
 
 ## Input Files
 
     pjm5.py       Grid topology, PTDF matrix, line limits, and 24-hour demand profile.
-                  Loaded at runtime by main.py and all solvers. Do not archive.
 
     assets.py     Generator and battery specifications. Defines GENERATORS and BATTERIES
                   lists. main.py scans the current directory for any file matching
                   assets*.py, so you can create alternative fleet configurations
-                  (e.g. assets_large.py, assets_cheap.py) and select between them
-                  at the prompt without modifying any source code.
+                  (e.g. assets_large.py) and select between them at the prompt.
 
-    locations.py  Default bus assignments: GENERATOR_LOCATIONS = {0:1, 1:3, 2:5} and
-                  BATTERY_LOCATIONS = {0:2, 1:4}. Used by ED and UC. Battery Siting
-                  ignores this file and searches all combinations.
+    locations.py  Default bus assignments for ED and UC (not used by Quantum Siting).
 
 
 ## Output Files
@@ -187,68 +231,51 @@ crashes on bad input.
 All outputs are saved to the outputs/ folder (created automatically on first run).
 
     outputs/{opt}_{T}h_{assets}.png    Network plot for the run.
-                                       Example: uc_8h_assets.png
 
-The plot shows:
-- Generator nodes sized by final-hour output (active) or greyed out (inactive, UC only)
-- Battery nodes marked with a star, labeled with final-hour state of charge
-- Transmission lines colored red if congested in any hour, black otherwise
-- Legend identifying node and line types
-
-For Battery Siting runs the plot shows the best-ranked placement.
-
-The standalone network diagram (no solver results) can also be produced with:
-
-    .venv/bin/python plots.py
+The plot shows generator nodes sized by output, battery nodes with SOC labels,
+and transmission lines colored red if congested. Quantum Siting runs do not
+generate a plot (best placement is printed in the terminal output).
 
 
 ## File Structure
 
     main.py                 Entry point. Interactive CLI, dispatches to chosen solver.
-    assets.py               Generator and battery fleet (edit or add alternatives here).
+    assets.py               Generator and battery fleet.
     locations.py            Default bus-to-unit assignments for ED and UC.
     pjm5.py                 Grid topology, PTDF, line limits, 24-hour demand profile.
-    plots.py                Network visualization. Extended for solver result display.
-    requirements.txt        Pinned dependencies.
+    plots.py                Network visualization.
+    requirements.txt        Dependencies (classical + quantum).
 
     solvers/
         __init__.py
-        results.py          EDResult, UCResult, SitingResult dataclasses.
+        results.py          EDResult, UCResult, SitingResult, QuantumSitingResult dataclasses.
         ed.py               Economic Dispatch solver (QP, HiGHS).
         uc.py               Unit Commitment solver (MIQP, SCIP).
         siting.py           Battery Siting — exhaustive UC loop over all bus pairs.
+        quantum_siting.py   Quantum Siting — VQA/SA sieve + classical refinement.
 
     tests/
-        test_ed.py          ED: feasibility, power balance, generator limits, SOC.
-        test_battery.py     Battery: SOC dynamics, rate limits, no simultaneous charge/discharge.
-        test_uc.py          UC: commitment logic, p_min/p_max with binary, power balance.
-        test_siting.py      Siting: 10 combinations returned, sorted ascending by cost.
-        test_cli.py         Input validation: rejects bad hours, bad file selection.
-
-    Formulation/
-        Siting_Formulation.tex    LaTeX source for the mathematical formulation (6 pages).
-        Siting_Formulation.pdf    Compiled PDF covering all sets, variables, objectives,
-                                  and constraints for ED, UC, and Siting.
-
-    Archive/
-        pjm5_cost.py        Original standalone ED script (reference only, superseded
-                            by solvers/ed.py).
+        conftest.py             pytest mark registration.
+        test_ed.py              ED: feasibility, power balance, generator limits, SOC.
+        test_battery.py         Battery: SOC dynamics, rate limits, no simultaneous charge/discharge.
+        test_uc.py              UC: commitment logic, p_min/p_max with binary, power balance.
+        test_siting.py          Siting: 10 combinations returned, sorted ascending by cost.
+        test_cli.py             Input validation: all prompt functions, bad input rejection.
+        test_quantum_siting.py  Quantum Siting: proxy cost, BQM structure, ansatz, Qiskit VQA.
 
 
 ## Solver Details
 
-    Optimization       Problem class    Solver    Typical runtime
-    ---------------    ------------     ------    ---------------
-    Economic Dispatch  Convex QP        HiGHS     < 1 second (any T)
-    Unit Commitment    MIQP             SCIP      5-30 seconds (T=24)
-    Battery Siting     10 x MIQP        SCIP      1-5 minutes (T=24)
+    Optimization       Problem class        Backend              Typical runtime
+    ---------------    ----------------     -------              ---------------
+    Economic Dispatch  Convex QP            HiGHS                < 1s (any T)
+    Unit Commitment    MIQP                 SCIP                 5-30s (T=24)
+    Battery Siting     10 x MIQP            SCIP                 1-5 min (T=24)
+    Quantum Siting     VQA or SA + ED/UC    Qiskit / D-Wave SA   5-30s (T=4, n=10)
 
-Both solvers are called through CVXPY. HiGHS is bundled with CVXPY. SCIP requires
-the pyscipopt package (included in requirements.txt).
-
-Battery Siting runs 10 independent UC solves sequentially. They are fully
-independent and could be parallelised with multiprocessing.Pool(10) to reduce
-wall time to roughly 1 UC solve. Not implemented in the current baseline.
+Quantum Siting runtime scales with n_candidates (classical stage) and n_layers
+(Qiskit VQA circuit depth). D-Wave SA is significantly faster than Qiskit VQA
+for the same n_candidates.
 
 
 ## Environment Setup
@@ -257,7 +284,7 @@ Python 3.11.12 is pinned via pyenv. A project-local venv is required.
 
     pyenv local 3.11.12
     python -m venv .venv
-    .venv/bin/pip install -r requirements.txt
+    .venv/bin/python -m pip install -r requirements.txt
 
 The dcopf package (used by pjm5.py) lives in the Tutorial subfolder and is wired
 in via a .pth file:
@@ -273,22 +300,27 @@ Always use .venv/bin/python, never system python.
 Run before committing:
 
     .venv/bin/ruff check main.py solvers/ tests/ assets.py locations.py plots.py
-    .venv/bin/pytest tests/ -v
+    .venv/bin/mypy main.py solvers/ --ignore-missing-imports
+    .venv/bin/pytest tests/ -m "not slow" -v
+    .venv/bin/pytest tests/ -m slow -v   # Qiskit VQA path (~30s)
 
 
 ## Background and Motivation
 
-This tool is the classical baseline for a quantum battery siting project. The full
-problem is: given a grid, find the optimal bus locations for 2 batteries, then
-dispatch all assets at minimum cost. The three optimization layers correspond to
-increasing problem complexity:
+This tool is the classical and quantum baseline for a battery siting project. The
+four optimization layers correspond to increasing problem complexity:
 
 - ED gives a lower bound (no commitment decisions, all units always on).
 - UC is the operationally realistic version (generators can be shut down).
-- Siting is the combinatorial outer layer — it is the target for quantum acceleration.
+- Siting is the combinatorial outer layer — exhaustive search over all bus pairs.
+- Quantum Siting replaces the combinatorial search with a quantum sieve, using
+  the classical solution as the reference cost to beat.
 
-The quantum approach will replace part of the siting search with a quantum
-algorithm, using this classical solution as the reference cost to beat.
+The quantum approach reduces the siting search from an exhaustive enumeration to
+a heuristic sieve over the joint (commitment, placement) space. On the PJM 5-bus
+grid with default assets, the D-Wave SA path matches the classical optimum exactly
+(0% gap) in under 1 second. The Qiskit VQA path runs in ~5 seconds on a local
+statevector simulator and is compatible with IonQ Forte gate hardware.
 
-The DC power flow approximation (linear PTDF-based line flows, no reactive power,
-no losses) is standard for unit commitment and siting studies at this scale.
+Reference: arXiv:2505.00145 — "A New Hybrid Quantum-Classical Algorithm for
+Solving the Unit Commitment Problem", Aboumrad et al., IonQ/ORNL, 2025.

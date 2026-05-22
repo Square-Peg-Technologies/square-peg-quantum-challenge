@@ -53,8 +53,9 @@ def prompt_assets() -> tuple:
         if 1 <= idx <= len(found):
             chosen = found[idx - 1]
             spec = importlib.util.spec_from_file_location("assets_chosen", chosen)
+            assert spec is not None and spec.loader is not None
             mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
+            spec.loader.exec_module(mod)  # type: ignore[union-attr]
             return chosen, mod
         print("Invalid selection. Please enter a number from the list.")
 
@@ -184,7 +185,7 @@ def print_results(
             cong_hrs = sum(1 for lines in uc_result.congested_lines if lines)
             print(f"{rank:<6} {pair_str:<12} {total_cost:>16,.0f} {cong_hrs:>14}")
         if result.infeasible:
-            print(f"\nInfeasible placements (line limits unsatisfiable at peak hours):")
+            print("\nInfeasible placements (line limits unsatisfiable at peak hours):")
             for bus_a, bus_b in result.infeasible:
                 print(f"  Buses ({bus_a}, {bus_b})")
         if result.ranking:

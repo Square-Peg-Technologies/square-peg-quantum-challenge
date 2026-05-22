@@ -191,26 +191,6 @@ def run_vqa_qiskit(
     from scipy.optimize import minimize as scipy_minimize
 
     n_qubits = n_qubits_gen + n_qubits_bat
-    B = n_qubits_bat  # number of buses == number of s bits; feasibility = sum(s)==B
-    # Note: B here is n_buses, not n_batteries. The caller passes n_buses for n_qubits_bat.
-    # Feasibility filter: exactly n_batteries placed. The caller must pass n_batteries
-    # separately; we use n_qubits_bat as the total bus count and filter externally via proxy_fn.
-    # We store B_required as the number of batteries from context — passed via proxy_fn closure.
-    # For filtering we count sum of s bits == batteries placed. Since proxy_fn already encodes
-    # P_budget, we filter by checking P_budget==0, i.e. sum(s bits)==n_batteries_required.
-    # We receive n_qubits_bat = n_buses; the required battery count B is embedded in proxy_fn.
-    # We filter by P_budget == 0: cost(bitstring) with lambda1*0 means we need another way.
-    # Simplest: filter by any s-part that gives P_budget=0. We do: for each bitstring, compute
-    # the s bits sum and compare. But we don't know B here. Use proxy_fn and check if
-    # (proxy_fn(bs) - c_min_contribution) is minimal — instead just pass n_batteries explicitly.
-    # REDESIGN: accept n_batteries as parameter via n_qubits_bat being n_buses; B_required
-    # is the actual battery count which we receive as a separate arg... but stub says n_qubits_bat.
-    # We use the proxy_fn's P_budget to filter: a feasible bitstring has sum(s)==B.
-    # We infer B by calling proxy_fn('0'*G + '1'*N) and checking if P_budget==0 when sum==B.
-    # SIMPLEST CORRECT APPROACH: just expose n_batteries as extra parameter in the actual call
-    # from run_quantum_siting, and use a closure. We add n_batteries_required to this function.
-    # Since we can't change the stub signature mid-implementation, we pass it via a wrapper.
-    # For now: the caller in run_quantum_siting will use a partial/wrapper. We add the param.
 
     qc, params = build_butterfly_ansatz(n_qubits, n_layers)
     sampler = StatevectorSampler()
@@ -272,15 +252,18 @@ def run_dwave_sa(
     n_qubits_bat: int,
     B: int,
     n_candidates: int,
+    num_reads: int | None = None,
 ) -> list[tuple]:
     """Run SimulatedAnnealingSampler and return top n_candidates feasible bitstrings.
 
     B is the number of batteries that must be placed (exact count filter).
+    num_reads overrides the default max(2000, 10*n_candidates) — useful for tests.
     Returns list of (u_bits, s_bits, energy) sorted ascending by energy.
     """
     from dwave.samplers import SimulatedAnnealingSampler
 
-    num_reads = max(2000, 10 * n_candidates)
+    if num_reads is None:
+        num_reads = max(2000, 10 * n_candidates)
     sampler = SimulatedAnnealingSampler()
     sampleset = sampler.sample(bqm, num_reads=num_reads)
 
@@ -378,6 +361,7 @@ def run_quantum_siting(
     backend: str,
     n_candidates: int,
     second_stage: str,
+    _num_reads: int | None = None,
 ):
     """Full hybrid quantum-classical siting pipeline.
 
@@ -435,6 +419,7 @@ def run_quantum_siting(
             n_qubits_bat=n_buses,
             B=B,
             n_candidates=n_candidates,
+            num_reads=_num_reads,
         )
 
     runtime_quantum = time.perf_counter() - t_q_start
