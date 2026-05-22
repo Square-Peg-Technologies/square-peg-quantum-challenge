@@ -1,5 +1,6 @@
 .venv/
 tests/
 Constitution/
+.claude/
 __pycache__/
 *.pyc
