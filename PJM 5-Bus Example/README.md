@@ -165,24 +165,36 @@ All prompts loop on invalid input. The program never crashes on bad input.
 
     Select optimization to run: 4
     Select quantum backend: 2
-    How many candidates to evaluate classically? [default: 10]: 5
-    Second-stage solver: 1
+    How many candidates to evaluate classically? [default: 10]: 10
+    Second-stage solver: 2
     How many hours to simulate? (1-24): 4
     Select a file (enter number): 1
 
-    Quantum Siting Results (D-Wave SA + ED refinement)
-    Quantum candidates found:   5
-    Candidates evaluated:       5
-    Runtime — quantum sieve:    0.3s
-    Runtime — classical stage:  0.3s
+    Quantum Siting Results (D-Wave SA + UC refinement)
+    Quantum candidates found:   10
+    Candidates evaluated:       7
+    Runtime — quantum sieve:    0.4s
+    Runtime — classical stage:  2.1s
 
-    Rank   Bat Placement        Commitment       True Cost ($)
-    ------------------------------------------------------------------
-    1      (1, 2)               011                     14,430
+    Rank   Bat Placement        True Cost ($)
+    --------------------------------------------
+    1      (1, 2)                      14,430
     ...
 
     Best placement: buses (1, 2), cost $14,430
-    Best commitment: ['OFF', 'ON', 'ON']
+
+    Commitment schedule (UC re-optimised per hour):
+      Hour |   Unit 0 |   Unit 1 |   Unit 2
+      ----------------------------------------
+         1 |      OFF |       ON |       ON
+         2 |      OFF |       ON |       ON
+         3 |       ON |       ON |       ON
+         4 |       ON |       ON |       ON
+
+Note: evaluated count may be less than candidates requested. In UC mode,
+candidates that decode to the same battery bus placement are collapsed to one
+evaluation (UC re-optimises commitment freely, so the result is identical).
+Infeasible placements caught by the solver are also skipped.
 
 
 ## Quantum Siting — How It Works
@@ -212,6 +224,18 @@ Qiskit VQA path:
 D-Wave path:
   Full QUBO with all linear, u-u, s-s, and cross u-s interaction terms.
   SimulatedAnnealingSampler, num_reads = max(2000, 10 × n_candidates).
+
+Classical second stage:
+  ED mode: commitment is fixed from the sieve bitstring (u_bits). Generators
+    marked OFF have their p_min/p_max zeroed before the ED solve.
+  UC mode: commitment is ignored — UC re-optimises it freely per hour. Candidates
+    sharing the same battery placement are deduplicated (one UC solve covers all
+    of them). The displayed commitment schedule reflects what UC actually chose,
+    not the sieve's u_bits.
+
+Candidates evaluated may be fewer than requested when:
+  - Multiple sieve candidates decode to the same battery bus assignment (UC mode)
+  - A placement is infeasible given line limits at peak demand (both modes)
 
 
 ## Input Files
