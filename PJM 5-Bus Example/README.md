@@ -1,8 +1,12 @@
 # PJM 5-Bus Quantum-Classical Siting Solver
 
-Hybrid quantum-classical solver for battery siting on the PJM 5-bus test grid.
+Hybrid quantum-classical solver for battery siting on power system test grids.
 Implements four levels of power system optimization — Economic Dispatch, Unit
 Commitment, Battery Siting, and Quantum Siting — all including battery storage.
+
+Two use cases are included: the PJM 5-bus grid (pjm5) and the IEEE 14-bus grid
+(ieee14). The ieee14 case adds a 200 MW datacenter load and uses 19 qubits for
+the quantum siting stage.
 
 Based on the IonQ/ORNL hybrid quantum-classical algorithm (arXiv:2505.00145) and
 the MATPOWER case5 network (Li & Bo, 2010 IEEE PES General Meeting).
@@ -116,6 +120,121 @@ SOC evolves each hour: SOC[t] = SOC[t-1] + efficiency * charge[t] - discharge[t]
 
 Default placements (used by ED and UC): Bus 2 and Bus 4.
 Battery Siting and Quantum Siting search for optimal placements automatically.
+
+
+## IEEE 14-Bus Use Case
+
+The ieee14 use case is the IEEE 14-bus test system (American Electric Power, 1962),
+sourced from MATPOWER case14. It represents a larger, more congested network for
+testing the quantum siting algorithm at 19 qubits.
+
+### Grid
+
+14 buses, 20 branches, 5 generators, one large datacenter load.
+
+Network summary:
+
+    Generator buses: 1, 2, 3, 6, 8
+    Load buses:      2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14
+    Transformer branches: 4-7 (ratio 0.978), 4-9 (ratio 0.969), 5-6 (ratio 0.932)
+
+Base load: 259 MW total across 11 load buses. 24-hour demand shaped by factors
+ranging from 0.45 (night minimum, ~117 MW) to 1.40 (midday peak, ~363 MW base).
+
+Key transmission bottlenecks:
+
+    Branch    Limit     Notes
+    --------  -------   -----
+    4-9       40 MW     Tight transformer; hard bottleneck to bus-9 cluster
+    5-6       80 MW     Sole path from main network to bus-6 cluster
+    6-12      60 MW     Limits supply to bus 12
+    13-14     60 MW     Restricts power to bus 14
+    1-5       120 MW    Moderate limit creating bus-5 congestion at high load
+    7-8       80 MW     Transformer to bus 8 (Gen 5)
+
+Full line limits (MW) in branch order:
+
+    [400, 120, 120, 120, 120, 120, 9999, 80, 40, 80, 80, 60, 120, 80, 100, 200, 80, 80, 80, 60]
+
+### Generators
+
+Five units from MATPOWER case14 / MATPOWER gencost.
+
+    Gen    Bus    p_min     p_max     Cost b ($/MWh)    Notes
+    ----   ---    -----     -----     --------------    -----
+    Gen 1   1      50 MW    332 MW         20           Swing bus, cheapest
+    Gen 2   2      20 MW    140 MW         20           Second cheapest
+    Gen 3   3      20 MW    100 MW         40           Higher cost
+    Gen 4   6      20 MW    100 MW         40           Higher cost
+    Gen 5   8      20 MW    100 MW         40           Higher cost
+
+Total installed capacity: 772 MW. Cost function is linear (cost_a = 0).
+At least Gen 1 + Gen 2 + one of Gen 3/4/5 must be committed to cover peak demand
+(363 MW base + 200 MW datacenter = 563 MW peak).
+
+### Datacenter Load
+
+A 200 MW flat datacenter load (constant across all 24 hours) is added at a chosen
+bus. The datacenter bus is determined by running site_datacenter.py, which sweeps
+all 14 buses and ranks them by total 24-hour ED cost.
+
+Feasible datacenter buses (buses 3, 6-14 are infeasible due to line limits):
+
+    Rank    Bus    Total 24h Cost ($)    Notes
+    ----    ---    ------------------    -----
+    1       1           228,429          Swing bus; DC served locally by Gen 1
+    2       2           228,429          Near Gen 2
+    3       4           231,178          Moderate congestion on 2-4 and 2-5 lines
+    4       5           234,906          Congested path via 1-5 line
+
+Datacenter siting workflow:
+
+    cd use_cases/ieee14
+    python site_datacenter.py
+
+This generates assets_dc_bus{N}.py for each feasible bus. Select the desired file
+when running main.py. Re-run site_datacenter.py after any change to line limits or
+the DC load size.
+
+### Batteries
+
+Four batteries (same spec as pjm5 case).
+
+    Parameter              Value
+    ---------              -----
+    Power rating           50 MW each
+    Energy capacity        200 MWh each
+    Round-trip efficiency  90%
+    Initial SOC            100% of capacity (200 MWh)
+
+### Quantum Siting on ieee14
+
+    Qubits:  G + N = 5 + 14 = 19
+    2^19 = 524,288 amplitudes (4 MB at single precision — trivial for modern GPUs)
+    Ansatz:  butterfly, L=3 layers, 114 COBYLA parameters
+    Runtime: ~2-3 minutes on RTX 3080 Ti with qiskit-aer-gpu
+
+GPU acceleration: if qiskit-aer-gpu is installed and a CUDA GPU is detected, the
+statevector simulation runs on the GPU. The terminal prints one line at startup:
+
+    Aer: GPU detected — using GPU statevector
+    Aer: no GPU — using CPU statevector
+    Aer: not installed — using Qiskit StatevectorSampler
+
+To install the GPU version (requires Qiskit 1.x and CUDA 12):
+
+    .venv/bin/python -m pip install qiskit-aer-gpu==0.15.1
+
+Note: qiskit-aer-gpu 0.15.x is the latest GPU build and requires Qiskit 1.x.
+The CPU-only qiskit-aer 0.17.x supports Qiskit 2.x but has no GPU equivalent.
+requirements.txt is pinned to qiskit<2.0 and qiskit-aer-gpu for GPU support.
+
+### Proxy Cost Function — ieee14 Notes
+
+The P_infeas shortfall term uses generator capacity only (batteries excluded).
+Batteries shift energy across hours but cannot create new peak capacity, so the
+shortfall check is: max(0, demand_ref - sum_g u_g * P_max_g). This ensures the
+VQA commits enough generators to cover peak demand before optimizing placements.
 
 
 ## Running the Tool
@@ -264,11 +383,25 @@ generate a plot (best placement is printed in the terminal output).
 ## File Structure
 
     main.py                 Entry point. Interactive CLI, dispatches to chosen solver.
-    assets.py               Generator and battery fleet.
-    locations.py            Default bus-to-unit assignments for ED and UC.
-    pjm5.py                 Grid topology, PTDF, line limits, 24-hour demand profile.
     plots.py                Network visualization.
     requirements.txt        Dependencies (classical + quantum).
+
+    use_cases/
+        pjm5/
+            pjm5.py             PJM 5-bus grid (MATPOWER case5): 5 buses, 6 branches, 3 generators.
+            assets.py           3 generators, 2 batteries (default fleet).
+            locations.py        Default bus assignments for ED and UC.
+
+        ieee14/
+            ieee14.py           IEEE 14-bus grid (MATPOWER case14): 14 buses, 20 branches, 5 generators.
+            assets.py           5 generators, 4 batteries, no datacenter (base template).
+            locations.py        Fixed generator locations; placeholder battery locations.
+            site_datacenter.py  One-time script: sweeps all 14 buses for datacenter placement,
+                                writes assets_dc_bus{N}.py for each feasible bus.
+            assets_dc_bus1.py   Datacenter at bus 1, 200 MW flat (rank 1 — cheapest).
+            assets_dc_bus2.py   Datacenter at bus 2, 200 MW flat (rank 2).
+            assets_dc_bus4.py   Datacenter at bus 4, 200 MW flat (rank 3).
+            assets_dc_bus5.py   Datacenter at bus 5, 200 MW flat (rank 4).
 
     solvers/
         __init__.py
@@ -290,16 +423,17 @@ generate a plot (best placement is printed in the terminal output).
 
 ## Solver Details
 
-    Optimization       Problem class        Backend              Typical runtime
-    ---------------    ----------------     -------              ---------------
-    Economic Dispatch  Convex QP            HiGHS                < 1s (any T)
-    Unit Commitment    MIQP                 SCIP                 5-30s (T=24)
-    Battery Siting     10 x MIQP            SCIP                 1-5 min (T=24)
-    Quantum Siting     VQA or SA + ED/UC    Qiskit / D-Wave SA   5-30s (T=4, n=10)
+    Optimization       Problem class        Backend              Typical runtime (pjm5 / ieee14)
+    ---------------    ----------------     -------              -------------------------------
+    Economic Dispatch  Convex QP            HiGHS                < 1s / < 1s
+    Unit Commitment    MIQP                 SCIP                 5-30s / 5-30s  (T=24)
+    Battery Siting     N x MIQP            SCIP                 1-5 min / hours  (T=24)
+    Quantum Siting     VQA or SA + ED/UC    Qiskit / D-Wave SA   5-30s / 2-3 min  (T=24, n=20)
 
 Quantum Siting runtime scales with n_candidates (classical stage) and n_layers
 (Qiskit VQA circuit depth). D-Wave SA is significantly faster than Qiskit VQA
-for the same n_candidates.
+for the same n_candidates. On ieee14, the Qiskit VQA path uses 19 qubits and
+benefits significantly from GPU acceleration via qiskit-aer-gpu.
 
 
 ## Environment Setup
