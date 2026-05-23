@@ -21,12 +21,12 @@ sys.path.insert(
     ),
 )
 
-_pjm5_path = os.path.join(os.path.dirname(__file__), "..", "pjm5.py")
+_pjm5_path = os.path.join(os.path.dirname(__file__), "..", "use_cases", "pjm5", "pjm5.py")
 _spec = importlib.util.spec_from_file_location("pjm5", os.path.abspath(_pjm5_path))
 _pjm5 = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_pjm5)
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "use_cases", "pjm5")))
 from assets import GENERATORS, BATTERIES  # noqa: E402
 from locations import BATTERY_LOCATIONS  # noqa: E402
 from solvers.uc import run_uc  # noqa: E402

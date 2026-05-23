@@ -33,42 +33,109 @@ def prompt_hours() -> int:
         print("Invalid input. Please enter a whole number between 1 and 24.")
 
 
-def prompt_assets() -> tuple:
-    found = sorted(glob.glob("assets*.py"))
-    if not found:
-        print("No assets files found in current directory.")
+def prompt_use_case() -> tuple[str, str]:
+    """Scan use_cases/ for subdirectories and prompt the user to pick one.
+
+    Returns (use_case_name, use_case_path).
+    """
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "use_cases")
+    if not os.path.isdir(base):
+        print("No use_cases/ directory found.")
         sys.exit(1)
 
-    print("Available assets files:")
-    for i, fname in enumerate(found, start=1):
-        print(f"  {i}. {fname}")
+    cases = sorted(
+        d for d in os.listdir(base)
+        if os.path.isdir(os.path.join(base, d)) and not d.startswith("_")
+    )
+    if not cases:
+        print("No use cases found in use_cases/.")
+        sys.exit(1)
+
+    if len(cases) == 1:
+        name = cases[0]
+        return name, os.path.join(base, name)
+
+    print("Available use cases:")
+    for i, name in enumerate(cases, start=1):
+        print(f"  {i}. {name}")
 
     while True:
-        raw = input("Select a file (enter number): ").strip()
+        raw = input("Select a use case (enter number): ").strip()
         try:
             idx = int(raw)
         except ValueError:
             print("Invalid selection. Please enter a number from the list.")
             continue
-        if 1 <= idx <= len(found):
-            chosen = found[idx - 1]
-            spec = importlib.util.spec_from_file_location("assets_chosen", chosen)
-            assert spec is not None and spec.loader is not None
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)  # type: ignore[union-attr]
-            return chosen, mod
+        if 1 <= idx <= len(cases):
+            name = cases[idx - 1]
+            return name, os.path.join(base, name)
         print("Invalid selection. Please enter a number from the list.")
+
+
+def load_use_case(use_case_name: str, use_case_path: str) -> tuple:
+    """Load grid module, assets module, and locations module from a use case folder.
+
+    If multiple assets*.py files exist the user is prompted to pick one;
+    if only one exists it is loaded automatically.
+
+    Returns (assets_file_name, grid_mod, assets_mod, loc_mod).
+    """
+    # Grid — file must be named after the use case (e.g. pjm5/pjm5.py)
+    grid_file = os.path.join(use_case_path, f"{use_case_name}.py")
+    grid_spec = importlib.util.spec_from_file_location(use_case_name, grid_file)
+    assert grid_spec is not None and grid_spec.loader is not None
+    grid_mod = importlib.util.module_from_spec(grid_spec)
+    grid_spec.loader.exec_module(grid_mod)  # type: ignore[union-attr]
+
+    # Locations
+    loc_file = os.path.join(use_case_path, "locations.py")
+    loc_spec = importlib.util.spec_from_file_location("locations", loc_file)
+    assert loc_spec is not None and loc_spec.loader is not None
+    loc_mod = importlib.util.module_from_spec(loc_spec)
+    loc_spec.loader.exec_module(loc_mod)  # type: ignore[union-attr]
+
+    # Assets — auto-select if only one, otherwise prompt
+    found = sorted(glob.glob(os.path.join(use_case_path, "assets*.py")))
+    if not found:
+        print(f"No assets files found in {use_case_path}.")
+        sys.exit(1)
+
+    if len(found) == 1:
+        chosen = found[0]
+    else:
+        print("Available assets files:")
+        for i, fpath in enumerate(found, start=1):
+            print(f"  {i}. {os.path.basename(fpath)}")
+        while True:
+            raw = input("Select assets file (enter number): ").strip()
+            try:
+                idx = int(raw)
+            except ValueError:
+                print("Invalid selection. Please enter a number from the list.")
+                continue
+            if 1 <= idx <= len(found):
+                chosen = found[idx - 1]
+                break
+            print("Invalid selection. Please enter a number from the list.")
+
+    assets_spec = importlib.util.spec_from_file_location("assets_chosen", chosen)
+    assert assets_spec is not None and assets_spec.loader is not None
+    assets_mod = importlib.util.module_from_spec(assets_spec)
+    assets_spec.loader.exec_module(assets_mod)  # type: ignore[union-attr]
+
+    return os.path.basename(chosen), grid_mod, assets_mod, loc_mod
 
 
 def print_header(
     opt_name: str,
     T: int,
+    use_case: str,
     assets_file: str,
     generators: list,
     batteries: list,
 ) -> None:
     print("=============================================")
-    print(f"Run: {opt_name} | Hours: {T} | Assets: {assets_file}")
+    print(f"Run: {opt_name} | Hours: {T} | Use case: {use_case} | Assets: {assets_file}")
 
     gen_lines = []
     for g in generators:
@@ -155,20 +222,6 @@ def print_quantum_results(result: "QuantumSitingResult") -> None:
     is_uc = result.second_stage == "uc"
     sorted_evals = sorted(result.evaluated, key=lambda x: x[2])
 
-    if is_uc:
-        print(f"\n{'Rank':<6} {'Bat Placement':<20} {'True Cost ($)':>16}")
-        print("-" * 44)
-        for rank, (bat_locs, _commit, true_cost, _res) in enumerate(sorted_evals, start=1):
-            bat_str = str(tuple(bat_locs.values()))
-            print(f"{rank:<6} {bat_str:<20} {true_cost:>16,.0f}")
-    else:
-        print(f"\n{'Rank':<6} {'Bat Placement':<20} {'Commitment':<16} {'True Cost ($)':>16}")
-        print("-" * 62)
-        for rank, (bat_locs, commitment, true_cost, _res) in enumerate(sorted_evals, start=1):
-            bat_str = str(tuple(bat_locs.values()))
-            commit_str = "".join("1" if c else "0" for c in commitment)
-            print(f"{rank:<6} {bat_str:<20} {commit_str:<16} {true_cost:>16,.0f}")
-
     best_locs, best_commit, best_cost, best_res = result.best
     print(f"\nBest placement: buses {tuple(best_locs.values())}, cost ${best_cost:,.0f}")
 
@@ -188,6 +241,20 @@ def print_quantum_results(result: "QuantumSitingResult") -> None:
             print(f"  {t + 1:>4} | {row}")
     else:
         print(f"Best commitment: {['ON' if c else 'OFF' for c in best_commit]}")
+
+    if is_uc:
+        print(f"\n{'Rank':<6} {'Bat Placement':<20} {'True Cost ($)':>16}")
+        print("-" * 44)
+        for rank, (bat_locs, _commit, true_cost, _res) in enumerate(sorted_evals, start=1):
+            bat_str = str(tuple(bat_locs.values()))
+            print(f"{rank:<6} {bat_str:<20} {true_cost:>16,.0f}")
+    else:
+        print(f"\n{'Rank':<6} {'Bat Placement':<20} {'Commitment':<16} {'True Cost ($)':>16}")
+        print("-" * 62)
+        for rank, (bat_locs, commitment, true_cost, _res) in enumerate(sorted_evals, start=1):
+            bat_str = str(tuple(bat_locs.values()))
+            commit_str = "".join("1" if c else "0" for c in commitment)
+            print(f"{rank:<6} {bat_str:<20} {commit_str:<16} {true_cost:>16,.0f}")
 
 
 def print_results(
@@ -313,27 +380,19 @@ def main():
     if opt == 4:
         quantum_opts = prompt_quantum_options()
     T = prompt_hours()
-    assets_file_name, assets_mod = prompt_assets()
+    use_case_name, use_case_path = prompt_use_case()
+    assets_file_name, grid_mod, assets_mod, loc_mod = load_use_case(use_case_name, use_case_path)
 
-    pjm5_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pjm5.py")
-    spec = importlib.util.spec_from_file_location("pjm5", pjm5_path)
-    pjm5_mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(pjm5_mod)
-    grid = pjm5_mod.Case()
-
+    grid = grid_mod.Case()
     generators = assets_mod.GENERATORS
     batteries = assets_mod.BATTERIES
-
-    loc_spec = importlib.util.spec_from_file_location("locations", "locations.py")
-    loc_mod = importlib.util.module_from_spec(loc_spec)
-    loc_spec.loader.exec_module(loc_mod)
     gen_locs = loc_mod.GENERATOR_LOCATIONS
     bat_locs = loc_mod.BATTERY_LOCATIONS
 
     opt_names = {1: "ED", 2: "UC", 3: "Siting", 4: "Quantum Siting"}
     opt_name = opt_names[opt]
 
-    print_header(opt_name, T, assets_file_name, generators, batteries)
+    print_header(opt_name, T, use_case_name, assets_file_name, generators, batteries)
     print(f"\nRunning {opt_name} optimization for T={T} hours...")
 
     from solvers.ed import run_ed

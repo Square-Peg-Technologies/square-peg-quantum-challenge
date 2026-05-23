@@ -8,14 +8,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # Load pjm5 grid
-pjm5_path = os.path.join(os.path.dirname(__file__), "..", "pjm5.py")
+pjm5_path = os.path.join(os.path.dirname(__file__), "..", "use_cases", "pjm5", "pjm5.py")
 spec = importlib.util.spec_from_file_location("pjm5", pjm5_path)
 pjm5_mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pjm5_mod)
 grid = pjm5_mod.Case()
 
 # Load assets
-assets_path = os.path.join(os.path.dirname(__file__), "..", "assets.py")
+assets_path = os.path.join(os.path.dirname(__file__), "..", "use_cases", "pjm5", "assets.py")
 assets_spec = importlib.util.spec_from_file_location("assets", assets_path)
 assets_mod = importlib.util.module_from_spec(assets_spec)
 assets_spec.loader.exec_module(assets_mod)
