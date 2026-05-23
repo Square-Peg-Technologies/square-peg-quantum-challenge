@@ -186,11 +186,86 @@ Parallelism summary:
 
 ## Future Tasks
 
+[ ] FT-2  VQA/COBYLA speedup — COBYLA runs serially on CPU; GPU is underutilized.
+          Options (in order of implementation effort):
+            a) Batch circuits in each COBYLA iteration: submit multiple parameter
+               sets to AerSamplerV2.run() in one GPU call instead of one at a time.
+               Low effort; could halve wall time for the optimizer phase.
+            b) Swap COBYLA for SPSA or Adam with parameter-shift gradients: evaluates
+               ~2N circuits per step (N = n_params) in a single batched GPU call.
+               Medium effort; estimated 10-50x speedup on optimizer step.
+            c) Parallel independent VQA trials: run multiple COBYLA instances
+               with different random seeds using multiprocessing.Pool, take best.
+               Low effort; scales with CPU core count; orthogonal to a/b.
+          Recommended starting point: (a) then (c).
+
 [ ] FT-1  UC solver scalability for larger grids — currently uses brute-force MIP
           solving via CVXPY for each candidate. For larger grids (>50 buses), consider
           replacing with a proper MIP formulation (branch-and-bound via SCIP/HiGHS)
           or a Lagrangian relaxation approach to avoid O(2^G) search space. Assess
           whether CVXPY/HiGHS can scale or if a dedicated MILP solver wrapper is needed.
+
+[ ] FT-3  Tests for ieee14 use case — test suite currently only covers pjm5.
+          Needed:
+            - ED/UC feasibility checks on ieee14 grid (base load + DC injection)
+            - Datacenter load injection via DATACENTER_BUS/DATACENTER_MW in load_use_case()
+            - site_datacenter.py: confirm feasible buses match expected set {1,2,4,5}
+              and assets_dc_bus{N}.py files are written with correct content
+            - Quantum siting on ieee14: at least one candidate survives classical
+              refinement with the fixed proxy cost function (battery-excluded shortfall)
+
+[ ] FT-4  Fix D-Wave SA path for ieee14 — SimulatedAnnealingSampler returns
+          candidates committing only 1-2 generators (total capacity < 563 MW peak),
+          so all candidates fail ED/UC refinement.
+          Root cause: BQM lambda2 scaling is too weak relative to the c_min savings
+          from leaving generators off — same imbalance fixed in the VQA proxy function.
+          Fix options:
+            a) Apply same battery-exclusion fix to BQM P_infeas term (exclude
+               P_bat contribution from shortfall calculation in build_bqm).
+            b) Increase lambda2 multiplier specifically for large grids where
+               demand_ref is high relative to individual generator capacities.
+          After fix, verify D-Wave SA produces feasible candidates on ieee14.
+
+[ ] FT-5  Qiskit 2.x / qiskit-aer-gpu upgrade path — requirements.txt is pinned
+          to qiskit<2.0 because qiskit-aer-gpu tops out at 0.15.x (Qiskit 1.x only).
+          Track the qiskit-aer-gpu release page for a Qiskit 2.x-compatible GPU build.
+          When available: bump qiskit and qiskit-aer-gpu pins, remove the <2.0 cap,
+          re-run tests, and update requirements.txt and README GPU setup notes.
+          Monitor: https://github.com/Qiskit/qiskit-aer/releases
+
+[ ] FT-6  Network plot for quantum siting results — options 1-3 generate a PNG
+          showing the grid with generator outputs, battery SOC, and congested lines;
+          option 4 (quantum siting) currently prints results to terminal only.
+          Add a topology diagram for the best quantum siting result: highlight
+          winning battery buses, show committed generators, and mark congested lines.
+          Should reuse the existing plots.py infrastructure where possible.
+
+[ ] FT-7  IonQ hardware submission path — the butterfly ansatz and 512-shot
+          sampling are designed for IonQ Forte gate hardware, but the tool currently
+          only runs on a local statevector simulator.
+          Task: wire up the Qiskit IonQ provider (qiskit-ionq or direct REST API)
+          so run_vqa_qiskit() can target real hardware. Add a backend option (e.g.
+          "ionq") alongside "qiskit" and "dwave" in the CLI. Gate count and
+          connectivity constraints for Forte should be verified against the ansatz.
+
+[ ] FT-8  Proxy cost lambda calibration — lambda1 and lambda2 are heuristic
+          multipliers (2× and 20× c_min_total respectively). For ieee14 they work
+          after the battery-exclusion fix, but scaling to larger grids (30+ buses,
+          10+ generators) may require recalibration.
+          Task: run a sweep over lambda multipliers on both pjm5 and ieee14, measure
+          how solution quality (gap vs classical optimum) varies, and document
+          recommended multiplier ranges per grid size. Consider making the multipliers
+          configurable parameters in run_quantum_siting().
+
+[ ] FT-9  Larger test case — IEEE 30-bus or IEEE 57-bus use case.
+          IEEE 30-bus: 6 generators + 30 buses = 36 qubits. 2^36 amplitudes exceed
+          CPU statevector memory (~512 GB); GPU (16 GB VRAM) can handle up to ~31
+          qubits in single precision. Would require either fewer generator qubits,
+          a reduced-variable encoding, or splitting the circuit.
+          IEEE 57-bus: 7 generators + 57 buses = 64 qubits — beyond single-GPU
+          statevector; would need tensor-network or matrix-product-state simulation.
+          Recommended starting point: IEEE 30-bus with a subset of generator qubits
+          (e.g. encode only the marginal generators, fix cheap baseload units ON).
 
 ---
 
