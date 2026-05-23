@@ -114,11 +114,12 @@ def test_proxy_fn_non_negative(proxy_fn):
 
 
 def test_proxy_fn_budget_penalty_for_wrong_count(proxy_fn, lambdas):
-    # Placing B+1 batteries costs more than exactly B
+    # With all generators on (capacity >> DEMAND_REF), P_infeas=0 for any battery
+    # count, so budget penalty is the only difference between exact and extra.
     s_exact = "1" * B + "0" * (N_BUSES - B)
     s_extra = "1" * (B + 1) + "0" * (N_BUSES - B - 1)
-    cost_exact = proxy_fn("0" * G + s_exact)
-    cost_extra = proxy_fn("0" * G + s_extra)
+    cost_exact = proxy_fn("1" * G + s_exact)
+    cost_extra = proxy_fn("1" * G + s_extra)
     assert cost_extra > cost_exact
 
 

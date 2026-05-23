@@ -25,44 +25,58 @@ def build_proxy_cost_fn(
     batteries: list[dict],
     n_buses: int,
     demand_ref: float,
+    T: int = 1,
 ) -> tuple[Callable[[str], float], float, float]:
     """Return (proxy_fn, lambda1, lambda2) for lazy Q(u,s) evaluation.
 
     proxy_fn(bitstring: str) -> float
         Bitstring layout: u_0..u_{G-1} s_0..s_{N-1} (index 0 = leftmost char).
         Returns Q(u, s) = c_min(u) + lambda1*P_budget(s) + lambda2*P_infeas(u,s).
+
+    lambda1, lambda2 are the BQM lambdas (D-Wave path, per-hour scaling).
+    proxy_fn uses T-scaled lambdas with a one-sided infeasibility penalty so that
+    over-capacity combinations are not penalised (only shortfall is penalised).
     """
     G = len(generators)
     B = len(batteries)
     P_bat = batteries[0]["power_mw"]
 
-    # Lower-bound cost coefficients per generator
     c_min_coeffs = [
         g["cost_a"] * g["p_min"] ** 2 + g["cost_b"] * g["p_min"] + g["cost_c"]
         for g in generators
     ]
     p_max_vals = [g["p_max"] for g in generators]
 
-    # Lambda scaling: scale to same order as typical c_min
+    # BQM lambdas (returned for D-Wave path, per-hour scaling, symmetric P_infeas)
     c_min_typical = sum(c_min_coeffs)
     lambda1 = c_min_typical * 2.0
     lambda2 = c_min_typical / (demand_ref ** 2 + 1e-6)
+
+    # Proxy-function lambdas (Qiskit path): scale by T so proxy estimates total-
+    # horizon cost; multiply lambda2 by 20 so shortfall is penalised strongly
+    # enough to rank infeasible generator combos above feasible ones.
+    c_min_total = c_min_typical * T
+    _lam1 = c_min_total * 2.0
+    _lam2 = c_min_total * 20.0 / (demand_ref ** 2 + 1e-6)
 
     def proxy_fn(bitstring: str) -> float:
         u = [int(bitstring[g]) for g in range(G)]
         s = [int(bitstring[G + i]) for i in range(n_buses)]
 
-        c_min_val = sum(u[g] * c_min_coeffs[g] for g in range(G))
+        c_min_val = sum(u[g] * c_min_coeffs[g] for g in range(G)) * T
 
         p_budget = (sum(s) - B) ** 2
 
-        p_infeas = (
+        # One-sided: penalise shortfall only (surplus capacity is fine)
+        shortfall = max(
+            0.0,
             demand_ref
             - sum(u[g] * p_max_vals[g] for g in range(G))
-            - sum(s[i] * P_bat for i in range(n_buses))
-        ) ** 2
+            - sum(s[i] * P_bat for i in range(n_buses)),
+        )
+        p_infeas = shortfall ** 2
 
-        return c_min_val + lambda1 * p_budget + lambda2 * p_infeas
+        return c_min_val + _lam1 * p_budget + _lam2 * p_infeas
 
     return proxy_fn, lambda1, lambda2
 
@@ -206,8 +220,10 @@ def run_vqa_qiskit(
         for bs, cnt in counts.items():
             # Qiskit bitstrings are little-endian (qubit 0 = rightmost)
             bs_ordered = bs[::-1]
-            avg_q += (cnt / total) * proxy_fn(bs_ordered)
-        return avg_q
+            val = proxy_fn(bs_ordered)
+            if np.isfinite(val):
+                avg_q += (cnt / total) * val
+        return avg_q if np.isfinite(avg_q) else 1e12
 
     result = scipy_minimize(
         fun=objective,
@@ -395,13 +411,15 @@ def run_quantum_siting(
     from solvers.results import QuantumSitingResult
 
     demand = np.array(grid.power_demand)   # (n_buses, T)
-    demand_ref = float(demand.sum(axis=0).max())  # peak total demand over horizon
+    demand_ref = float(np.nanmax(demand.sum(axis=0)))  # peak total demand over horizon
 
     n_buses = demand.shape[0]
     G = len(generators)
     B = len(batteries)
 
-    proxy_fn, lambda1, lambda2 = build_proxy_cost_fn(generators, batteries, n_buses, demand_ref)
+    proxy_fn, lambda1, lambda2 = build_proxy_cost_fn(
+        generators, batteries, n_buses, demand_ref, T
+    )
 
     # ── Quantum sieve ────────────────────────────────────────────────────────
     t_q_start = time.perf_counter()
