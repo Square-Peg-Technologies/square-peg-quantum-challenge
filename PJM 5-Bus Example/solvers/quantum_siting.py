@@ -79,12 +79,13 @@ def build_proxy_cost_fn(
 
         p_budget = (sum(s) - B) ** 2
 
-        # One-sided: penalise shortfall only (surplus capacity is fine)
+        # One-sided: penalise generator shortfall only.
+        # Batteries are excluded — they shift energy, not create capacity,
+        # so generator commitment alone must cover peak demand.
         shortfall = max(
             0.0,
             demand_ref
-            - sum(u[g] * p_max_vals[g] for g in range(G))
-            - sum(s[i] * P_bat for i in range(n_buses)),
+            - sum(u[g] * p_max_vals[g] for g in range(G)),
         )
         p_infeas = shortfall ** 2
 

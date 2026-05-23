@@ -150,6 +150,50 @@ Parallelism summary:
 
 ---
 
+## IEEE 14-Bus Use Case — Completed Work Log
+
+[x] IEEE14-1  Created use_cases/ieee14/ieee14.py — exact MATPOWER case14 data,
+              14 buses, 20 branches, 5 generators, 24h demand shaped by factors.
+              fbar set to create meaningful congestion for datacenter siting.
+
+[x] IEEE14-2  Created use_cases/ieee14/assets.py — 5 generators, 4 batteries,
+              DATACENTER_BUS=None base template.
+
+[x] IEEE14-3  Created use_cases/ieee14/locations.py — fixed generator locations
+              from case14 (buses 1,2,3,6,8), placeholder battery locations.
+
+[x] IEEE14-4  Created use_cases/ieee14/site_datacenter.py — sweeps all 14 buses,
+              ranks by ED cost, writes assets_dc_bus{N}.py for feasible buses.
+              Result: buses 1,2,4,5 feasible; bus 1 cheapest ($228,429/24h).
+
+[x] IEEE14-5  Modified main.py — injected DC load from assets DATACENTER_BUS/MW
+              after grid construction; 3-line change in load_use_case().
+
+[x] IEEE14-6  Added Aer GPU acceleration to solvers/quantum_siting.py — auto-detect
+              GPU at import, use AerSamplerV2 with GPU statevector, fall back to CPU.
+              Downgraded Qiskit to 1.4.5 and installed qiskit-aer-gpu 0.15.1 for
+              GPU compatibility (qiskit-aer-gpu max is 0.15.x, requires Qiskit 1.x).
+
+[x] IEEE14-7  Fixed proxy cost function — removed batteries from shortfall calculation.
+              Batteries shift energy (finite capacity) and cannot create new peak capacity;
+              generator commitment alone must cover peak demand. Fix resolved VQA producing
+              single-generator solutions (u=10000) that all failed ED refinement.
+
+[x] IEEE14-8  Verified full Qiskit+Aer GPU quantum siting run on ieee14 — 2m17s,
+              20/20 candidates feasible, best placement buses (2,11,12,13) at $209,229.
+
+---
+
+## Future Tasks
+
+[ ] FT-1  UC solver scalability for larger grids — currently uses brute-force MIP
+          solving via CVXPY for each candidate. For larger grids (>50 buses), consider
+          replacing with a proper MIP formulation (branch-and-bound via SCIP/HiGHS)
+          or a Lagrangian relaxation approach to avoid O(2^G) search space. Assess
+          whether CVXPY/HiGHS can scale or if a dedicated MILP solver wrapper is needed.
+
+---
+
 ## Constraints
 
 - solvers/ed.py, solvers/uc.py, solvers/siting.py must not be modified
