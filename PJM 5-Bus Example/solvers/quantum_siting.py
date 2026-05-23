@@ -15,6 +15,18 @@ from typing import Callable
 
 import numpy as np
 
+# ---------------------------------------------------------------------------
+# Aer backend detection (optional — falls back to Qiskit StatevectorSampler)
+# ---------------------------------------------------------------------------
+try:
+    from qiskit_aer.primitives import SamplerV2 as _AerSamplerV2
+    from qiskit_aer import AerSimulator as _AerSimulator
+    _AER_AVAILABLE = True
+    _GPU_AVAILABLE = "GPU" in _AerSimulator().available_devices()
+except Exception:
+    _AER_AVAILABLE = False
+    _GPU_AVAILABLE = False
+
 
 # ---------------------------------------------------------------------------
 # Proxy cost function (lazy classical evaluation from bitstring)
@@ -201,13 +213,24 @@ def run_vqa_qiskit(
 
     Returns list of (u_bits, s_bits, proxy_cost) sorted ascending by proxy_cost.
     """
-    from qiskit.primitives import StatevectorSampler
     from scipy.optimize import minimize as scipy_minimize
 
     n_qubits = n_qubits_gen + n_qubits_bat
 
     qc, params = build_butterfly_ansatz(n_qubits, n_layers)
-    sampler = StatevectorSampler()
+
+    if _AER_AVAILABLE:
+        sampler = _AerSamplerV2()
+        if _GPU_AVAILABLE:
+            sampler.options.backend_options = {
+                "method": "statevector", "device": "GPU", "precision": "single"
+            }
+        else:
+            sampler.options.backend_options = {"method": "statevector", "device": "CPU"}
+    else:
+        from qiskit.primitives import StatevectorSampler
+        sampler = StatevectorSampler()
+
     n_shots_cobyla = 512
     theta0 = np.zeros(len(params))
 

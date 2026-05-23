@@ -116,6 +116,40 @@ Parallelism summary:
 
 ---
 
+## Open Questions / Research Tasks
+
+[ ] OQ-1  Verify proxy cost data flow vs IonQ paper
+          Current implementation evaluates Q(u,s) as a pure constants calculation:
+            c_min(u)     — closed-form lower-bound cost from generator params
+            P_budget(s)  — (sum(s) - B)^2, no solve
+            P_infeas     — (demand_ref - gen_cap - bat_cap)^2, no solve
+          The IonQ paper (arXiv:2505.00145) may intend the quantum circuit to
+          minimise an expectation value of a cost Hamiltonian (i.e. the VQA IS
+          the optimizer solve, not just a sampler over a pre-defined function).
+          Questions to answer:
+            - Does the paper encode Q(u,s) as a Pauli Hamiltonian and minimise
+              ⟨ψ|H|ψ⟩, rather than sampling bitstrings and evaluating them classically?
+            - If so, our current approach (sample bitstrings → evaluate proxy_fn
+              classically) is a valid approximation but not identical to the paper.
+            - Check whether butterfly ansatz + COBYLA on ⟨H⟩ vs on ⟨Q⟩_classical
+              matters for solution quality at 8 qubits.
+            - Confirm the correct role of proxy_fn: is it used only for post-sampling
+              ranking, or should it drive the VQA objective differently?
+          Reference: arXiv:2505.00145 Section III and uc_10gen_benchmark.py QAOA path
+
+          Note: The IonQ paper likely constructs a cost Hamiltonian from Q(u,s) and runs the
+          VQA to minimize ⟨ψ|H|ψ⟩ directly, which is the standard QAOA/VQA pattern. Our
+          current implementation does something different: it samples bitstrings from the
+          circuit and evaluates them through proxy_fn classically to compute the expected
+          cost objective. Both approaches steer the circuit toward low-cost bitstrings, but
+          the Hamiltonian approach is what the paper calls the "quantum sieve" — the quantum
+          device is actually solving the optimization, not just sampling from an independently-
+          defined function. Worth reading Section III of the paper carefully and cross-
+          referencing with uc_10gen_benchmark.py QAOA path to see if there's a SparsePauliOp
+          construction that should be driving the objective.
+
+---
+
 ## Constraints
 
 - solvers/ed.py, solvers/uc.py, solvers/siting.py must not be modified

@@ -118,6 +118,10 @@ def load_use_case(use_case_name: str, use_case_path: str) -> tuple:
                 break
             print("Invalid selection. Please enter a number from the list.")
 
+    # Add use_case_path to sys.path so assets_dc_bus{N}.py can do "from assets import ..."
+    if use_case_path not in sys.path:
+        sys.path.insert(0, use_case_path)
+
     assets_spec = importlib.util.spec_from_file_location("assets_chosen", chosen)
     assert assets_spec is not None and assets_spec.loader is not None
     assets_mod = importlib.util.module_from_spec(assets_spec)
@@ -384,6 +388,13 @@ def main():
     assets_file_name, grid_mod, assets_mod, loc_mod = load_use_case(use_case_name, use_case_path)
 
     grid = grid_mod.Case()
+
+    # Inject datacenter load if the assets file specifies one
+    dc_bus = getattr(assets_mod, "DATACENTER_BUS", None)
+    dc_mw = float(getattr(assets_mod, "DATACENTER_MW", 0))
+    if dc_bus is not None and dc_mw > 0:
+        grid.power_demand[dc_bus - 1, :] += dc_mw
+
     generators = assets_mod.GENERATORS
     batteries = assets_mod.BATTERIES
     gen_locs = loc_mod.GENERATOR_LOCATIONS
@@ -409,6 +420,14 @@ def main():
         result = run_siting(grid, generators, batteries, T)
     else:
         backend, n_candidates, second_stage = quantum_opts
+        if backend == "qiskit":
+            from solvers.quantum_siting import _AER_AVAILABLE, _GPU_AVAILABLE
+            if _AER_AVAILABLE and _GPU_AVAILABLE:
+                print("Aer: GPU detected — using GPU statevector")
+            elif _AER_AVAILABLE:
+                print("Aer: no GPU — using CPU statevector")
+            else:
+                print("Aer: not installed — using Qiskit StatevectorSampler")
         result = run_quantum_siting(
             grid=grid,
             generators=generators,
