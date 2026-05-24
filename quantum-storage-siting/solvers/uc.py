@@ -21,8 +21,9 @@ def run_uc(grid, generators, batteries, bat_locs, T):
     """
     n_gen = len(generators)
     n_bat = len(batteries)
-    PTDF = np.array(grid.PTDF)   # (6, 5)
-    fbar = np.array(grid.fbar).flatten()  # (6,)
+    PTDF = np.array(grid.PTDF)
+    fbar = np.array(grid.fbar).flatten()
+    n_bus = PTDF.shape[1]
 
     # Decision variables
     p = cp.Variable((n_gen, T), nonneg=True)   # generator output
@@ -34,17 +35,17 @@ def run_uc(grid, generators, batteries, bat_locs, T):
     soc     = cp.Variable((n_bat, T), nonneg=True)  # state of charge
     z       = cp.Variable((n_bat, T), boolean=True) # charge direction (1=charging)
 
-    # Unit vectors for each generator bus (5-vector)
+    # Unit vectors for each generator bus
     e_gen = []
     for g in range(n_gen):
-        e = np.zeros(5)
+        e = np.zeros(n_bus)
         e[generators[g]["bus"] - 1] = 1.0
         e_gen.append(e)
 
-    # Unit vectors for each battery bus (5-vector)
+    # Unit vectors for each battery bus
     e_bat = []
     for b in range(n_bat):
-        e = np.zeros(5)
+        e = np.zeros(n_bus)
         e[bat_locs[b] - 1] = 1.0
         e_bat.append(e)
 
@@ -103,7 +104,7 @@ def run_uc(grid, generators, batteries, bat_locs, T):
         demand = grid.power_demand[:, t]  # (5,)
 
         # Net injection expression (CVXPY)
-        inj = cp.Constant(np.zeros(5))
+        inj = cp.Constant(np.zeros(n_bus))
         for g in range(n_gen):
             inj = inj + p[g, t] * e_gen[g]
         for b in range(n_bat):
@@ -153,7 +154,7 @@ def run_uc(grid, generators, batteries, bat_locs, T):
     congested_lines = []
     for t in range(T):
         demand = grid.power_demand[:, t]
-        inj_val = np.zeros(5)
+        inj_val = np.zeros(n_bus)
         for g in range(n_gen):
             inj_val[generators[g]["bus"] - 1] += p_val[g, t]
         for b in range(n_bat):

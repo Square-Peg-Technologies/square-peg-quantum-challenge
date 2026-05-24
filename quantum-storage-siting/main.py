@@ -137,9 +137,13 @@ def print_header(
     assets_file: str,
     generators: list,
     batteries: list,
+    dc_bus: int | None = None,
+    dc_mw: float = 0.0,
 ) -> None:
     print("=============================================")
     print(f"Run: {opt_name} | Hours: {T} | Use case: {use_case} | Assets: {assets_file}")
+    if dc_bus is not None and dc_mw > 0:
+        print(f"Datacenter: {dc_mw:.0f} MW flat load injected at Bus {dc_bus}")
 
     gen_lines = []
     for g in generators:
@@ -403,7 +407,7 @@ def main():
     opt_names = {1: "ED", 2: "UC", 3: "Siting", 4: "Quantum Siting"}
     opt_name = opt_names[opt]
 
-    print_header(opt_name, T, use_case_name, assets_file_name, generators, batteries)
+    print_header(opt_name, T, use_case_name, assets_file_name, generators, batteries, dc_bus, dc_mw)
     print(f"\nRunning {opt_name} optimization for T={T} hours...")
 
     from solvers.ed import run_ed

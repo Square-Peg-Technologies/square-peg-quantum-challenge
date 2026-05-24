@@ -10,10 +10,24 @@ Reference: arXiv:2505.00145 (IonQ/ORNL, Aboumrad et al., 2025)
 
 from __future__ import annotations
 
+import logging
+import os
 import time
 from typing import Callable
 
 import numpy as np
+
+# ---------------------------------------------------------------------------
+# Debug logger — writes to outputs/quantum_siting_debug.log
+# ---------------------------------------------------------------------------
+_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", "quantum_siting_debug.log")
+os.makedirs(os.path.dirname(_log_path), exist_ok=True)
+_dbg = logging.getLogger("quantum_siting")
+if not _dbg.handlers:
+    _fh = logging.FileHandler(_log_path, mode="w")
+    _fh.setFormatter(logging.Formatter("%(asctime)s  %(message)s", datefmt="%H:%M:%S"))
+    _dbg.addHandler(_fh)
+    _dbg.setLevel(logging.DEBUG)
 
 # ---------------------------------------------------------------------------
 # Aer backend detection (optional — falls back to Qiskit StatevectorSampler)
@@ -393,10 +407,11 @@ def evaluate_candidates(
                 result_obj = run_uc(grid, generators, batteries, bat_locs, T)
                 true_cost = result_obj.total_cost
 
+            _dbg.debug("PASS bat_locs=%s commit=%s cost=%.0f", bat_locs, commitment, true_cost)
             results.append((bat_locs, commitment, true_cost, result_obj))
 
-        except (RuntimeError, Exception):
-            # Skip infeasible candidates
+        except (RuntimeError, Exception) as e:
+            _dbg.debug("FAIL bat_locs=%s commit=%s error=%s", bat_locs, commitment, e)
             continue
 
     return results
@@ -482,6 +497,9 @@ def run_quantum_siting(
     # ── Classical refinement ─────────────────────────────────────────────────
     t_c_start = time.perf_counter()
 
+    _dbg.debug("Quantum sieve produced %d candidates (peak demand=%.1f MW)", len(quantum_candidates), demand_ref)
+    for u, s, c in quantum_candidates:
+        _dbg.debug("  candidate u=%s s=%s proxy=%.1f n_bats=%d", u, s, c, sum(int(b) for b in s))
     evaluated = evaluate_candidates(
         candidates=quantum_candidates,
         grid=grid,
