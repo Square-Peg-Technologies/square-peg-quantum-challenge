@@ -159,6 +159,30 @@ line limits or datacenter size:
 Confirmed quantum siting result (Qiskit VQA + UC, T=24h, n=10):
 Best placement buses (2, 4, 6, 7), cost $199,804 in ~2.5 min on RTX 3080 Ti.
 
+### LMP and Shadow Price Extraction
+
+use_cases/ieee14/extract_lmps.py runs a no-battery DC-OPF on ieee14 and extracts
+the data needed to build the P_loc(s) battery location value term for the QUBO proxy:
+
+    .venv/bin/python use_cases/ieee14/extract_lmps.py
+
+Outputs to outputs/ (created automatically):
+
+    lmps_14x24.csv           LMP at each bus for each of the 24 hours (14 × 24)
+    shadow_prices_20x24.csv  Shadow price on each line for each hour (20 × 24)
+    lmp_summary.csv          Per-bus LMP mean, variance, std, min, max
+
+LMPs are the nodal marginal prices ($/MWh). Shadow prices on binding lines are
+the congestion components — a bus with high PTDF exposure to a binding line has
+high congestion relief value for battery placement.
+
+Note: with the datacenter at Bus 1 (co-located with Gen 1), the current line
+limits do not produce spatial LMP differentiation — all buses price identically
+at $20/MWh (cheap hours) or $40/MWh (peak hours) with no binding lines. The
+P_loc term will have no signal in this configuration. A scenario with the
+datacenter at a more congested bus, or tighter line limits, is needed to create
+meaningful spatial variation. Pending PLEXOS baseline from Andrew.
+
 
 ## Running the Tool
 
