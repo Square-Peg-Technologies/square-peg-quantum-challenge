@@ -385,7 +385,7 @@ def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteri
 
     fig, axes = plt.subplots(4, 1, figsize=(13, 11), sharex=True)
     fig.suptitle(
-        f"PJM 5-Bus — {opt_name} Overview | T={T}h | {assets_file}",
+        f"{opt_name} Overview | T={T}h | {assets_file}",
         fontsize=13, y=0.98
     )
 
@@ -509,7 +509,7 @@ def save_demand_plot(grid, out_dir=None):
 
     ax.set_xlabel("Hour", fontsize=11)
     ax.set_ylabel("Demand (MW)", fontsize=11)
-    ax.set_title("PJM 5-Bus System — 24-Hour Demand Profile", fontsize=13, pad=12)
+    ax.set_title("24-Hour Demand Profile", fontsize=13, pad=12)
     ax.set_xticks(hours)
     ax.set_xlim(0.5, T + 0.5)
     ax.legend(loc="upper left", fontsize=9)
@@ -554,7 +554,7 @@ def save_plot(result, opt_name: str, T: int, assets_file: str, grid=None):
 
 if __name__ == "__main__":
     fig, ax = plt.subplots(figsize=(9, 7))
-    ax.set_title("PJM 5-Bus Network — Generator Locations", fontsize=14, pad=14)
+    ax.set_title("Network — Generator Locations", fontsize=14, pad=14)
 
     draw_network(G, pos, ax)
 
