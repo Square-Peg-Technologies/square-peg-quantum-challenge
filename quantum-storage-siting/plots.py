@@ -123,17 +123,9 @@ def _congested_edge_colors(result, branches_list=None):
     return ["red" if i in all_congested else "black" for i in range(len(branches_list))]
 
 
-def _draw_datacenter(ax, pos_g, dc_bus, dc_mw):
-    """Overlay a datacenter marker (purple diamond) on the network axes."""
-    x, y = pos_g[dc_bus]
-    ax.scatter(x, y, marker="D", s=220, color="#7b2d8b", zorder=6)
-    ax.annotate(
-        f"DC\n{dc_mw:.0f} MW",
-        xy=(x, y), xytext=(0, -22), textcoords="offset points",
-        ha="center", va="top", fontsize=7.5, fontweight="bold",
-        color="#7b2d8b",
-        bbox=dict(fc="white", ec="none", alpha=0.85, pad=1),
-    )
+def _node_edge_colors(nodes, dc_bus):
+    """Return per-node border colour: red for the datacenter node, none elsewhere."""
+    return ["red" if n == dc_bus else "none" for n in nodes]
 
 
 def draw_ed_result(result, gen_locations: dict, bat_locations: dict, ax,
@@ -157,31 +149,32 @@ def draw_ed_result(result, gen_locations: dict, bat_locations: dict, ax,
             node_sizes.append(400 + result.dispatch[gen_idx, -1] * 0.5)
             node_colors.append(gen_node_color)
         elif n in bat_bus_set:
-            node_sizes.append(800)
+            node_sizes.append(700)
             node_colors.append("#2ca02c")
         else:
             node_sizes.append(600)
             node_colors.append(load_node_color)
 
-    nx.draw_networkx_nodes(Gg, pos_g, ax=ax, nodelist=list(Gg.nodes),
-                           node_color=node_colors, node_size=node_sizes)
+    nodelist = list(Gg.nodes)
+    nx.draw_networkx_nodes(Gg, pos_g, ax=ax, nodelist=nodelist,
+                           node_color=node_colors, node_size=node_sizes,
+                           edgecolors=_node_edge_colors(nodelist, dc_bus),
+                           linewidths=3.0)
 
-    for bat_idx, bus in bat_locations.items():
-        ax.scatter(*pos_g[bus], marker="*", s=600, color="#2ca02c", zorder=5)
+    # Bus number inside node (white), status info offset above
+    node_labels = {n: str(n) for n in Gg.nodes}
+    nx.draw_networkx_labels(Gg, pos_g, ax=ax, labels=node_labels,
+                            font_color="white", font_weight="bold", font_size=9)
 
-    labels = {}
+    status = {}
     for gen_idx, bus in gen_locations.items():
-        labels[bus] = f"{bus}\n{result.dispatch[gen_idx, -1]:.0f} MW"
+        status[bus] = f"{result.dispatch[gen_idx, -1]:.0f} MW"
     for bat_idx, bus in bat_locations.items():
         soc = result.soc[bat_idx, -1]
-        labels[bus] = labels.get(bus, str(bus)) + f"\nB{bat_idx} {soc:.0f}MWh"
-    for n in Gg.nodes:
-        if n not in labels:
-            labels[n] = str(n)
-    _draw_labels(Gg, pos_g, ax, labels)
-
+        status[bus] = status.get(bus, "") + (f"\n" if bus in status else "") + f"B{bat_idx} {soc:.0f}MWh"
     if dc_bus is not None and dc_mw > 0:
-        _draw_datacenter(ax, pos_g, dc_bus, dc_mw)
+        status[dc_bus] = status.get(dc_bus, "") + (f"\n" if dc_bus in status else "") + f"DC {dc_mw:.0f}MW"
+    _draw_labels(Gg, pos_g, ax, {n: status[n] for n in status})
 
     gen_patch  = mpatches.Patch(color=gen_node_color,  label="Generator bus")
     load_patch = mpatches.Patch(color=load_node_color, label="Load / reference bus")
@@ -189,7 +182,10 @@ def draw_ed_result(result, gen_locations: dict, bat_locations: dict, ax,
     cong_patch = mpatches.Patch(color="red",           label="Congested line")
     handles = [gen_patch, load_patch, bat_patch, cong_patch]
     if dc_bus is not None and dc_mw > 0:
-        handles.append(mpatches.Patch(color="#7b2d8b", label="Datacenter"))
+        from matplotlib.lines import Line2D
+        handles.append(Line2D([0], [0], marker="o", color="w", markerfacecolor="none",
+                               markeredgecolor="red", markeredgewidth=2, markersize=10,
+                               label="Datacenter load"))
     ax.legend(handles=handles, loc="lower left", fontsize=8, framealpha=0.9)
     ax.axis("off")
 
@@ -217,38 +213,36 @@ def draw_uc_result(result, gen_locations: dict, bat_locations: dict, ax,
                 node_sizes.append(400 + result.dispatch[gen_idx, -1] * 0.5)
                 node_colors.append(gen_node_color)
             else:
-                node_sizes.append(300)
+                node_sizes.append(500)
                 node_colors.append("#aaaaaa")
         elif n in bat_bus_set:
-            node_sizes.append(800)
+            node_sizes.append(700)
             node_colors.append("#2ca02c")
         else:
             node_sizes.append(600)
             node_colors.append(load_node_color)
 
-    nx.draw_networkx_nodes(Gg, pos_g, ax=ax, nodelist=list(Gg.nodes),
-                           node_color=node_colors, node_size=node_sizes)
+    nodelist = list(Gg.nodes)
+    nx.draw_networkx_nodes(Gg, pos_g, ax=ax, nodelist=nodelist,
+                           node_color=node_colors, node_size=node_sizes,
+                           edgecolors=_node_edge_colors(nodelist, dc_bus),
+                           linewidths=3.0)
 
-    for bat_idx, bus in bat_locations.items():
-        ax.scatter(*pos_g[bus], marker="*", s=600, color="#2ca02c", zorder=5)
+    # Bus number inside node (white), status info offset above
+    node_labels = {n: str(n) for n in Gg.nodes}
+    nx.draw_networkx_labels(Gg, pos_g, ax=ax, labels=node_labels,
+                            font_color="white", font_weight="bold", font_size=9)
 
-    labels = {}
+    status = {}
     for gen_idx, bus in gen_locations.items():
         committed = result.commitment[gen_idx, -1]
-        if committed == 1:
-            labels[bus] = f"{bus}\n{result.dispatch[gen_idx, -1]:.0f} MW"
-        else:
-            labels[bus] = f"{bus}\n(off)"
+        status[bus] = f"{result.dispatch[gen_idx, -1]:.0f} MW" if committed == 1 else "(off)"
     for bat_idx, bus in bat_locations.items():
         soc = result.soc[bat_idx, -1]
-        labels[bus] = labels.get(bus, str(bus)) + f"\nB{bat_idx} {soc:.0f}MWh"
-    for n in Gg.nodes:
-        if n not in labels:
-            labels[n] = str(n)
-    _draw_labels(Gg, pos_g, ax, labels)
-
+        status[bus] = status.get(bus, "") + (f"\n" if bus in status else "") + f"B{bat_idx} {soc:.0f}MWh"
     if dc_bus is not None and dc_mw > 0:
-        _draw_datacenter(ax, pos_g, dc_bus, dc_mw)
+        status[dc_bus] = status.get(dc_bus, "") + (f"\n" if dc_bus in status else "") + f"DC {dc_mw:.0f}MW"
+    _draw_labels(Gg, pos_g, ax, {n: status[n] for n in status})
 
     gen_patch  = mpatches.Patch(color=gen_node_color,  label="Generator bus (active)")
     off_patch  = mpatches.Patch(color="#aaaaaa",       label="Generator bus (inactive)")
@@ -257,7 +251,10 @@ def draw_uc_result(result, gen_locations: dict, bat_locations: dict, ax,
     cong_patch = mpatches.Patch(color="red",           label="Congested line")
     handles = [gen_patch, off_patch, load_patch, bat_patch, cong_patch]
     if dc_bus is not None and dc_mw > 0:
-        handles.append(mpatches.Patch(color="#7b2d8b", label="Datacenter"))
+        from matplotlib.lines import Line2D
+        handles.append(Line2D([0], [0], marker="o", color="w", markerfacecolor="none",
+                               markeredgecolor="red", markeredgewidth=2, markersize=10,
+                               label="Datacenter load"))
     ax.legend(handles=handles, loc="lower left", fontsize=8, framealpha=0.9)
     ax.axis("off")
 
