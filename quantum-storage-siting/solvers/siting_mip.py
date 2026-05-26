@@ -27,16 +27,19 @@ def run_siting_mip(grid, generators, batteries, T, n_results=10) -> SitingResult
     PTDF  = np.array(grid.PTDF)
     fbar  = np.array(grid.fbar).flatten()
     n_bus = PTDF.shape[1]
+    n_bn  = n_bat * n_bus   # flattened (battery, bus) index space
 
-    # Unit vectors for generator buses
-    e_gen = []
+    # Generator injection matrix: E_gen[:, g] = unit vector for generator g's bus
+    E_gen = np.zeros((n_bus, n_gen))
     for g in range(n_gen):
-        e = np.zeros(n_bus)
-        e[generators[g]["bus"] - 1] = 1.0
-        e_gen.append(e)
+        E_gen[generators[g]["bus"] - 1, g] = 1.0
 
-    # Identity matrix — one column per bus for battery injection
-    e_bus = np.eye(n_bus)
+    # Battery injection matrix: B_bat[:, b*n_bus+n] = unit vector for bus n
+    # B_bat @ (y_minus_flat - y_plus_flat) gives net battery injection per bus.
+    B_bat = np.zeros((n_bus, n_bn))
+    for b in range(n_bat):
+        for n in range(n_bus):
+            B_bat[n, b * n_bus + n] = 1.0
 
     # ── Decision variables ────────────────────────────────────────────────────
     p       = cp.Variable((n_gen, T), nonneg=True)   # generator output
@@ -48,9 +51,13 @@ def run_siting_mip(grid, generators, batteries, T, n_results=10) -> SitingResult
     soc     = cp.Variable((n_bat, T), nonneg=True)   # state of charge
     z       = cp.Variable((n_bat, T), boolean=True)  # charge direction (1=charging)
 
-    x       = cp.Variable((n_bat, n_bus), boolean=True)   # siting: x[b,n]=1 → bat b at bus n
-    y_plus  = cp.Variable((n_bat, n_bus, T), nonneg=True) # linearisation of x*r_plus
-    y_minus = cp.Variable((n_bat, n_bus, T), nonneg=True) # linearisation of x*r_minus
+    # x[b, n] = 1 → battery b placed at bus n
+    x = cp.Variable((n_bat, n_bus), boolean=True)
+
+    # Linearisation: y_*_flat[b*n_bus + n, t] = x[b,n] * r_*[b, t]
+    # Kept 2D (n_bn, T) to avoid CVXPY's slow scipy fallback for 3-D tensors.
+    y_plus_flat  = cp.Variable((n_bn, T), nonneg=True)
+    y_minus_flat = cp.Variable((n_bn, T), nonneg=True)
 
     # ── Objective (identical to run_uc) ──────────────────────────────────────
     obj_terms = []
@@ -68,7 +75,7 @@ def run_siting_mip(grid, generators, batteries, T, n_results=10) -> SitingResult
     # ── Base constraints ──────────────────────────────────────────────────────
     constraints = []
 
-    # Generator bounds and startup (same as run_uc)
+    # Generator bounds and startup
     for g in range(n_gen):
         p_min = generators[g]["p_min"]
         p_max = generators[g]["p_max"]
@@ -80,7 +87,7 @@ def run_siting_mip(grid, generators, batteries, T, n_results=10) -> SitingResult
             else:
                 constraints.append(v[g, t] >= u[g, t] - u[g, t - 1])
 
-    # Battery operation (same as run_uc)
+    # Battery operation
     for b in range(n_bat):
         pw   = batteries[b]["power_mw"]
         cap  = batteries[b]["capacity_mwh"]
@@ -100,33 +107,27 @@ def run_siting_mip(grid, generators, batteries, T, n_results=10) -> SitingResult
     for b in range(n_bat):
         constraints.append(cp.sum(x[b, :]) == 1)
 
-    # Big-M linearisation: y_plus[b,n,t]  = x[b,n] * r_plus[b,t]
-    #                       y_minus[b,n,t] = x[b,n] * r_minus[b,t]
+    # Big-M linearisation over (b, n) pairs — uses scalar x[b,n] per pair,
+    # with slice constraints over all T at once to stay 2D throughout.
     for b in range(n_bat):
         M = batteries[b]["power_mw"]
         for n in range(n_bus):
-            for t in range(T):
-                constraints.append(y_plus[b, n, t]  <= M * x[b, n])
-                constraints.append(y_plus[b, n, t]  <= r_plus[b, t])
-                constraints.append(y_plus[b, n, t]  >= r_plus[b, t]  - M * (1 - x[b, n]))
-                constraints.append(y_minus[b, n, t] <= M * x[b, n])
-                constraints.append(y_minus[b, n, t] <= r_minus[b, t])
-                constraints.append(y_minus[b, n, t] >= r_minus[b, t] - M * (1 - x[b, n]))
+            i = b * n_bus + n
+            constraints.append(y_plus_flat[i, :]  <= M * x[b, n])
+            constraints.append(y_plus_flat[i, :]  <= r_plus[b, :])
+            constraints.append(y_plus_flat[i, :]  >= r_plus[b, :]  - M * (1 - x[b, n]))
+            constraints.append(y_minus_flat[i, :] <= M * x[b, n])
+            constraints.append(y_minus_flat[i, :] <= r_minus[b, :])
+            constraints.append(y_minus_flat[i, :] >= r_minus[b, :] - M * (1 - x[b, n]))
 
-    # Power balance and line flows with siting-aware battery injection
-    for t in range(T):
-        demand = grid.power_demand[:, t]
-        inj = cp.Constant(np.zeros(n_bus))
-        for g in range(n_gen):
-            inj = inj + p[g, t] * e_gen[g]
-        for b in range(n_bat):
-            for n in range(n_bus):
-                inj = inj + (y_minus[b, n, t] - y_plus[b, n, t]) * e_bus[n]
-        net = inj - demand
-        constraints.append(cp.sum(net) == 0)
-        flow = PTDF @ net
-        constraints.append(flow <=  fbar)
-        constraints.append(flow >= -fbar)
+    # Power balance and line flows — fully vectorised over buses and time:
+    #   net[n, t] = gen_injection[n,t] + bat_injection[n,t] - demand[n,t]
+    demand_mat = grid.power_demand[:, :T]                    # shape (n_bus, T)
+    net = E_gen @ p + B_bat @ (y_minus_flat - y_plus_flat) - demand_mat
+    constraints.append(cp.sum(net, axis=0) == 0)            # balance per timestep
+    flow = PTDF @ net                                        # shape (n_lines, T)
+    constraints.append(flow <=  fbar.reshape(-1, 1))
+    constraints.append(flow >= -fbar.reshape(-1, 1))
 
     # ── Iterative solve with no-good cuts ─────────────────────────────────────
     ranking    = []
@@ -139,14 +140,14 @@ def run_siting_mip(grid, generators, batteries, T, n_results=10) -> SitingResult
         if x.value is None:
             break
 
-        x_val = np.round(x.value).astype(int)
+        x_val = np.round(x.value).astype(int)   # shape (n_bat, n_bus)
 
         # Determine bus for each battery (1-indexed)
         bat_locs  = {b: int(np.argmax(x_val[b, :])) + 1 for b in range(n_bat)}
         bus_tuple = tuple(bat_locs[b] for b in range(n_bat))
         total_cost = float(prob.value)
 
-        # Reconstruct UCResult from solved variable values
+        # Reconstruct UCResult
         p_val   = p.value
         u_val   = np.round(u.value).astype(int)
         v_val   = np.round(v.value).astype(int)
