@@ -349,13 +349,16 @@ def print_results(
     print(f"{'TOTAL':>4} | {result.total_cost:>12,.2f}")
 
 
-def save_plot(result, opt_name: str, T: int, assets_file: str, grid=None) -> None:
+def save_plot(result, opt_name: str, T: int, assets_file: str, grid=None,
+              generators=None, bat_locs=None, dc_bus=None, dc_mw=0.0) -> None:
     try:
         from plots import save_plot as _save_plot
     except ImportError:
         return
     try:
-        _save_plot(result, opt_name, T, assets_file, grid=grid)
+        _save_plot(result, opt_name, T, assets_file, grid=grid,
+                   generators=generators, bat_locs=bat_locs,
+                   dc_bus=dc_bus, dc_mw=dc_mw)
     except Exception as e:
         print(f"Plot save failed: {e}")
 
@@ -455,12 +458,22 @@ def main():
     print(f"Solver time: {time_str}")
 
     print_results(result, opt_name, T, generators, batteries)
-    plot_result = result.uc_result if isinstance(result, SitingMIPResult) else result
+
+    if isinstance(result, SitingMIPResult):
+        plot_result     = result.uc_result
+        plot_bat_locs   = result.bat_locs
+    else:
+        plot_result     = result
+        plot_bat_locs   = bat_locs
+
     if not isinstance(plot_result, (SitingResult, QuantumSitingResult)):
-        save_plot(plot_result, opt_name, T, assets_file_name, grid=grid)
+        save_plot(plot_result, opt_name, T, assets_file_name, grid=grid,
+                  generators=generators, bat_locs=plot_bat_locs,
+                  dc_bus=dc_bus, dc_mw=dc_mw)
         save_overview(plot_result, opt_name, T, assets_file_name, generators, batteries, grid)
     elif isinstance(plot_result, SitingResult):
-        save_plot(plot_result, opt_name, T, assets_file_name, grid=grid)
+        save_plot(plot_result, opt_name, T, assets_file_name, grid=grid,
+                  generators=generators, dc_bus=dc_bus, dc_mw=dc_mw)
 
 
 if __name__ == "__main__":
