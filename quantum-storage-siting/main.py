@@ -4,7 +4,7 @@ import os
 import sys
 import time
 
-from solvers.results import UCResult, SitingResult, QuantumSitingResult
+from solvers.results import UCResult, SitingResult, SitingMIPResult, QuantumSitingResult
 
 
 def prompt_optimization() -> int:
@@ -12,7 +12,7 @@ def prompt_optimization() -> int:
         print("Select optimization to run:")
         print("  1. Economic Dispatch (ED)")
         print("  2. Unit Commitment (UC)")
-        print("  3. Battery Siting (MIP, top-K)")
+        print("  3. Battery Siting (MIP, optimal)")
         print("  4. Quantum Siting (Hybrid VQA + Classical)")
         raw = input("Enter number: ").strip()
         if raw in ("1", "2", "3", "4"):
@@ -31,21 +31,6 @@ def prompt_hours() -> int:
         if 1 <= val <= 24:
             return val
         print("Invalid input. Please enter a whole number between 1 and 24.")
-
-
-def prompt_n_results() -> int:
-    while True:
-        raw = input("How many top placements to return? (default 10): ").strip()
-        if raw == "":
-            return 10
-        try:
-            val = int(raw)
-        except ValueError:
-            print("Invalid input. Please enter a whole number.")
-            continue
-        if val >= 1:
-            return val
-        print("Must be at least 1.")
 
 
 def prompt_use_case() -> tuple[str, str]:
@@ -291,6 +276,11 @@ def print_results(
         print_quantum_results(result)
         return
 
+    if isinstance(result, SitingMIPResult):
+        print(f"\nOptimal battery placement: buses {result.bus_tuple}")
+        print(f"Total cost: ${result.total_cost:,.0f}")
+        result = result.uc_result   # fall through to UC display below
+
     if isinstance(result, SitingResult):
         print("\nBattery Siting Results (ranked by total cost):")
         print(f"{'Rank':<6} {'Bus Placement':<20} {'Total Cost ($)':>16} {'Congested Hrs':>14}")
@@ -432,8 +422,7 @@ def main():
     elif opt == 2:
         result = run_uc(grid, generators, batteries, bat_locs, T)
     elif opt == 3:
-        n_results = prompt_n_results()
-        result = run_siting_mip(grid, generators, batteries, T, n_results)
+        result = run_siting_mip(grid, generators, batteries, T)
     else:
         backend, n_candidates, second_stage = quantum_opts
         if backend == "qiskit":

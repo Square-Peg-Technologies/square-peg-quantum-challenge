@@ -33,6 +33,14 @@ class SitingResult:
 
 
 @dataclass
+class SitingMIPResult:
+    bus_tuple: tuple        # optimal bus assignment per battery, e.g. (3, 7, 1, 12)
+    bat_locs: dict          # {battery_index: bus_number}  (1-indexed)
+    uc_result: UCResult     # full UC schedule for the optimal placement
+    total_cost: float
+
+
+@dataclass
 class QuantumSitingResult:
     backend: str                   # "qiskit" | "dwave"
     second_stage: str              # "ed" | "uc"

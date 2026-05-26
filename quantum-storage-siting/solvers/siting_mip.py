@@ -1,14 +1,15 @@
 import numpy as np
-import cvxpy as cp
+from pyscipopt import Model, quicksum
 
-from .results import UCResult, SitingResult
+from .results import UCResult, SitingMIPResult
 
 
-def run_siting_mip(grid, generators, batteries, T, n_results=10) -> SitingResult:
-    """Joint battery-siting + unit-commitment MILP.
+def run_siting_mip(grid, generators, batteries, T) -> SitingMIPResult:
+    """Joint battery-siting + unit-commitment MILP via PySCIPOpt.
 
-    Solves placement and commitment simultaneously. Top-K placements are
-    recovered by adding a no-good cut after each solve and re-solving.
+    Finds the globally optimal battery bus placement and generator commitment
+    schedule in a single SCIP solve. SOS1 constraints on the siting variables
+    let SCIP branch efficiently without needing indicator constraints.
 
     Parameters
     ----------
@@ -16,184 +17,225 @@ def run_siting_mip(grid, generators, batteries, T, n_results=10) -> SitingResult
     generators : list of dicts (name, bus, p_min, p_max, cost_a, cost_b, cost_c, startup_cost)
     batteries  : list of dicts (name, power_mw, capacity_mwh, efficiency, init_soc)
     T          : number of time steps
-    n_results  : how many top placements to return
 
     Returns
     -------
-    SitingResult
+    SitingMIPResult
     """
-    n_gen = len(generators)
-    n_bat = len(batteries)
-    PTDF  = np.array(grid.PTDF)
-    fbar  = np.array(grid.fbar).flatten()
-    n_bus = PTDF.shape[1]
-    n_bn  = n_bat * n_bus   # flattened (battery, bus) index space
+    n_gen   = len(generators)
+    n_bat   = len(batteries)
+    PTDF    = np.array(grid.PTDF)
+    fbar    = np.array(grid.fbar).flatten()
+    n_bus   = PTDF.shape[1]
+    n_lines = PTDF.shape[0]
 
-    # Generator injection matrix: E_gen[:, g] = unit vector for generator g's bus
-    E_gen = np.zeros((n_bus, n_gen))
+    model = Model("battery_siting")
+    model.hideOutput()
+
+    # ── Variables ─────────────────────────────────────────────────────────────
+
+    p = {}; u = {}; v = {}
     for g in range(n_gen):
-        E_gen[generators[g]["bus"] - 1, g] = 1.0
+        pmax = generators[g]["p_max"]
+        for t in range(T):
+            p[g, t] = model.addVar(lb=0, ub=pmax,  name=f"p_{g}_{t}")
+            u[g, t] = model.addVar(vtype="B",       name=f"u_{g}_{t}")
+            v[g, t] = model.addVar(vtype="B",       name=f"v_{g}_{t}")
 
-    # Battery injection matrix: B_bat[:, b*n_bus+n] = unit vector for bus n
-    # B_bat @ (y_minus_flat - y_plus_flat) gives net battery injection per bus.
-    B_bat = np.zeros((n_bus, n_bn))
+    r_plus = {}; r_minus = {}; soc = {}; z = {}
+    for b in range(n_bat):
+        pw  = batteries[b]["power_mw"]
+        cap = batteries[b]["capacity_mwh"]
+        for t in range(T):
+            r_plus[b, t]  = model.addVar(lb=0, ub=pw,  name=f"rp_{b}_{t}")
+            r_minus[b, t] = model.addVar(lb=0, ub=pw,  name=f"rm_{b}_{t}")
+            soc[b, t]     = model.addVar(lb=0, ub=cap, name=f"soc_{b}_{t}")
+            z[b, t]       = model.addVar(vtype="B",    name=f"z_{b}_{t}")
+
+    # x[b,n] = 1 → battery b placed at bus n
+    x = {}
     for b in range(n_bat):
         for n in range(n_bus):
-            B_bat[n, b * n_bus + n] = 1.0
+            x[b, n] = model.addVar(vtype="B", name=f"x_{b}_{n}")
 
-    # ── Decision variables ────────────────────────────────────────────────────
-    p       = cp.Variable((n_gen, T), nonneg=True)   # generator output
-    u       = cp.Variable((n_gen, T), boolean=True)  # commitment
-    v       = cp.Variable((n_gen, T), boolean=True)  # startup indicator
+    # y_plus[b,n,t]  = x[b,n] * r_plus[b,t]   (linearisation)
+    # y_minus[b,n,t] = x[b,n] * r_minus[b,t]
+    y_plus = {}; y_minus = {}
+    for b in range(n_bat):
+        pw = batteries[b]["power_mw"]
+        for n in range(n_bus):
+            for t in range(T):
+                y_plus[b, n, t]  = model.addVar(lb=0, ub=pw, name=f"yp_{b}_{n}_{t}")
+                y_minus[b, n, t] = model.addVar(lb=0, ub=pw, name=f"ym_{b}_{n}_{t}")
 
-    r_plus  = cp.Variable((n_bat, T), nonneg=True)   # battery charge rate
-    r_minus = cp.Variable((n_bat, T), nonneg=True)   # battery discharge rate
-    soc     = cp.Variable((n_bat, T), nonneg=True)   # state of charge
-    z       = cp.Variable((n_bat, T), boolean=True)  # charge direction (1=charging)
+    # ── Objective ─────────────────────────────────────────────────────────────
+    # setObjective only accepts linear expressions in PySCIPOpt 6.x.
+    # Quadratic generation costs (cost_a * p^2) are handled via an auxiliary
+    # variable q_quad with a nonlinear constraint q_quad >= sum(ca * p^2).
 
-    # x[b, n] = 1 → battery b placed at bus n
-    x = cp.Variable((n_bat, n_bus), boolean=True)
-
-    # Linearisation: y_*_flat[b*n_bus + n, t] = x[b,n] * r_*[b, t]
-    # Kept 2D (n_bn, T) to avoid CVXPY's slow scipy fallback for 3-D tensors.
-    y_plus_flat  = cp.Variable((n_bn, T), nonneg=True)
-    y_minus_flat = cp.Variable((n_bn, T), nonneg=True)
-
-    # ── Objective (identical to run_uc) ──────────────────────────────────────
-    obj_terms = []
+    linear_obj = []
+    quad_terms = []
     for g in range(n_gen):
         ca = generators[g]["cost_a"]
         cb = generators[g]["cost_b"]
         cc = generators[g]["cost_c"]
         sc = generators[g]["startup_cost"]
-        obj_terms.append(ca * cp.sum_squares(p[g, :]))
-        obj_terms.append(cb * cp.sum(p[g, :]))
-        obj_terms.append(cc * cp.sum(u[g, :]))
-        obj_terms.append(sc * cp.sum(v[g, :]))
-    objective = cp.Minimize(sum(obj_terms))
+        for t in range(T):
+            if ca != 0.0:
+                quad_terms.append(ca * p[g, t] * p[g, t])
+            linear_obj.append(cb * p[g, t])
+            linear_obj.append(cc * u[g, t])
+            linear_obj.append(sc * v[g, t])
 
-    # ── Base constraints ──────────────────────────────────────────────────────
-    constraints = []
+    if quad_terms:
+        q_quad = model.addVar(lb=0, name="q_quad")
+        model.addCons(q_quad >= quicksum(quad_terms))
+        linear_obj.append(q_quad)
 
-    # Generator bounds and startup
+    model.setObjective(quicksum(linear_obj), sense="minimize")
+
+    # ── Generator constraints ─────────────────────────────────────────────────
+
     for g in range(n_gen):
         p_min = generators[g]["p_min"]
         p_max = generators[g]["p_max"]
         for t in range(T):
-            constraints.append(p[g, t] >= p_min * u[g, t])
-            constraints.append(p[g, t] <= p_max * u[g, t])
+            model.addCons(p[g, t] >= p_min * u[g, t])
+            model.addCons(p[g, t] <= p_max * u[g, t])
             if t == 0:
-                constraints.append(v[g, t] >= u[g, t])
+                model.addCons(v[g, t] >= u[g, t])
             else:
-                constraints.append(v[g, t] >= u[g, t] - u[g, t - 1])
+                model.addCons(v[g, t] >= u[g, t] - u[g, t - 1])
 
-    # Battery operation
+    # ── Battery constraints ───────────────────────────────────────────────────
+
     for b in range(n_bat):
         pw   = batteries[b]["power_mw"]
-        cap  = batteries[b]["capacity_mwh"]
         eff  = batteries[b]["efficiency"]
         soc0 = batteries[b]["init_soc"]
         for t in range(T):
-            constraints.append(r_plus[b, t]  <= pw * z[b, t])
-            constraints.append(r_minus[b, t] <= pw * (1 - z[b, t]))
+            model.addCons(r_plus[b, t]  <= pw * z[b, t])
+            model.addCons(r_minus[b, t] <= pw * (1 - z[b, t]))
             if t == 0:
-                constraints.append(soc[b, t] == soc0 + eff * r_plus[b, t] - r_minus[b, t])
+                model.addCons(soc[b, t] == soc0 + eff * r_plus[b, t] - r_minus[b, t])
             else:
-                constraints.append(soc[b, t] == soc[b, t - 1] + eff * r_plus[b, t] - r_minus[b, t])
-            constraints.append(soc[b, t] >= 0)
-            constraints.append(soc[b, t] <= cap)
+                model.addCons(soc[b, t] == soc[b, t - 1] + eff * r_plus[b, t] - r_minus[b, t])
 
-    # Siting: each battery placed at exactly one bus
+    # ── Siting: each battery placed at exactly one bus ────────────────────────
+
     for b in range(n_bat):
-        constraints.append(cp.sum(x[b, :]) == 1)
+        model.addCons(quicksum(x[b, n] for n in range(n_bus)) == 1)
 
-    # Big-M linearisation over (b, n) pairs — uses scalar x[b,n] per pair,
-    # with slice constraints over all T at once to stay 2D throughout.
+    # SOS1: SCIP branches on x[b,:] as a "pick one" set, avoiding the
+    # exponential binary branching that makes big-M slow.
+    for b in range(n_bat):
+        model.addConsSOS1([x[b, n] for n in range(n_bus)])
+
+    # ── Big-M linearisation ───────────────────────────────────────────────────
+    # With SOS1 branching, x[b,n] is fixed early in the tree, making the
+    # big-M constraints tight at each node — no LP relaxation weakness.
+
     for b in range(n_bat):
         M = batteries[b]["power_mw"]
         for n in range(n_bus):
-            i = b * n_bus + n
-            constraints.append(y_plus_flat[i, :]  <= M * x[b, n])
-            constraints.append(y_plus_flat[i, :]  <= r_plus[b, :])
-            constraints.append(y_plus_flat[i, :]  >= r_plus[b, :]  - M * (1 - x[b, n]))
-            constraints.append(y_minus_flat[i, :] <= M * x[b, n])
-            constraints.append(y_minus_flat[i, :] <= r_minus[b, :])
-            constraints.append(y_minus_flat[i, :] >= r_minus[b, :] - M * (1 - x[b, n]))
+            for t in range(T):
+                model.addCons(y_plus[b, n, t]  <= r_plus[b, t])
+                model.addCons(y_plus[b, n, t]  <= M * x[b, n])
+                model.addCons(y_plus[b, n, t]  >= r_plus[b, t]  - M * (1 - x[b, n]))
+                model.addCons(y_minus[b, n, t] <= r_minus[b, t])
+                model.addCons(y_minus[b, n, t] <= M * x[b, n])
+                model.addCons(y_minus[b, n, t] >= r_minus[b, t] - M * (1 - x[b, n]))
 
-    # Power balance and line flows — fully vectorised over buses and time:
-    #   net[n, t] = gen_injection[n,t] + bat_injection[n,t] - demand[n,t]
-    demand_mat = grid.power_demand[:, :T]                    # shape (n_bus, T)
-    net = E_gen @ p + B_bat @ (y_minus_flat - y_plus_flat) - demand_mat
-    constraints.append(cp.sum(net, axis=0) == 0)            # balance per timestep
-    flow = PTDF @ net                                        # shape (n_lines, T)
-    constraints.append(flow <=  fbar.reshape(-1, 1))
-    constraints.append(flow >= -fbar.reshape(-1, 1))
+    # ── Power balance and line flow constraints ───────────────────────────────
 
-    # ── Iterative solve with no-good cuts ─────────────────────────────────────
-    ranking    = []
-    infeasible = []
+    for t in range(T):
+        demand = grid.power_demand[:, t]
 
-    for _ in range(n_results):
-        prob = cp.Problem(objective, constraints)
-        prob.solve(solver="SCIP", verbose=False)
+        # Net injection per bus as a dict of SCIP expressions
+        net = {}
+        for n in range(n_bus):
+            gen_inj = quicksum(
+                p[g, t] for g in range(n_gen) if generators[g]["bus"] - 1 == n
+            )
+            bat_inj = quicksum(
+                y_minus[b, n, t] - y_plus[b, n, t] for b in range(n_bat)
+            )
+            net[n] = gen_inj + bat_inj - demand[n]
 
-        if x.value is None:
-            break
+        # Power balance: sum of net injections == 0
+        model.addCons(quicksum(net[n] for n in range(n_bus)) == 0)
 
-        x_val = np.round(x.value).astype(int)   # shape (n_bat, n_bus)
+        # Line flows within limits
+        for l in range(n_lines):
+            flow_l = quicksum(PTDF[l, n] * net[n] for n in range(n_bus))
+            model.addCons(flow_l <=  fbar[l])
+            model.addCons(flow_l >= -fbar[l])
 
-        # Determine bus for each battery (1-indexed)
-        bat_locs  = {b: int(np.argmax(x_val[b, :])) + 1 for b in range(n_bat)}
-        bus_tuple = tuple(bat_locs[b] for b in range(n_bat))
-        total_cost = float(prob.value)
+    # ── Solve ─────────────────────────────────────────────────────────────────
 
-        # Reconstruct UCResult
-        p_val   = p.value
-        u_val   = np.round(u.value).astype(int)
-        v_val   = np.round(v.value).astype(int)
-        rp_val  = r_plus.value
-        rm_val  = r_minus.value
-        soc_val = soc.value
+    model.optimize()
 
-        hourly_costs = []
-        for t in range(T):
-            cost_t = 0.0
-            for g in range(n_gen):
-                ca = generators[g]["cost_a"]
-                cb = generators[g]["cost_b"]
-                cc = generators[g]["cost_c"]
-                cost_t += ca * p_val[g, t] ** 2 + cb * p_val[g, t] + cc * u_val[g, t]
-            hourly_costs.append(cost_t)
+    status = model.getStatus()
+    if status not in ("optimal", "bestsol"):
+        raise RuntimeError(f"SCIP did not find a feasible solution (status: {status})")
 
-        congested_lines = []
-        for t in range(T):
-            demand = grid.power_demand[:, t]
-            inj_val = np.zeros(n_bus)
-            for g in range(n_gen):
-                inj_val[generators[g]["bus"] - 1] += p_val[g, t]
-            for b in range(n_bat):
-                inj_val[bat_locs[b] - 1] += rm_val[b, t] - rp_val[b, t]
-            net_val  = inj_val - demand
-            flow_val = PTDF @ net_val
-            congested = [i for i in range(len(fbar)) if abs(flow_val[i]) > fbar[i] * 0.999]
-            congested_lines.append(congested)
+    # ── Extract solution ──────────────────────────────────────────────────────
 
-        uc_result = UCResult(
-            dispatch=p_val,
-            battery_charge=rp_val,
-            battery_discharge=rm_val,
-            soc=soc_val,
-            total_cost=total_cost,
-            hourly_costs=hourly_costs,
-            congested_lines=congested_lines,
-            commitment=u_val,
-            startups=v_val,
-        )
-        ranking.append((bus_tuple, total_cost, uc_result))
+    bat_locs = {}
+    for b in range(n_bat):
+        for n in range(n_bus):
+            if model.getVal(x[b, n]) > 0.5:
+                bat_locs[b] = n + 1   # 1-indexed
+                break
+    bus_tuple = tuple(bat_locs[b] for b in range(n_bat))
 
-        # No-good cut: at least one battery must move to a different bus
-        constraints.append(
-            cp.sum(cp.multiply(x_val.astype(float), x)) <= n_bat - 1
-        )
+    p_val   = np.array([[model.getVal(p[g, t])          for t in range(T)] for g in range(n_gen)])
+    u_val   = np.array([[round(model.getVal(u[g, t]))   for t in range(T)] for g in range(n_gen)], dtype=int)
+    v_val   = np.array([[round(model.getVal(v[g, t]))   for t in range(T)] for g in range(n_gen)], dtype=int)
+    rp_val  = np.array([[model.getVal(r_plus[b, t])     for t in range(T)] for b in range(n_bat)])
+    rm_val  = np.array([[model.getVal(r_minus[b, t])    for t in range(T)] for b in range(n_bat)])
+    soc_val = np.array([[model.getVal(soc[b, t])        for t in range(T)] for b in range(n_bat)])
 
-    return SitingResult(ranking=ranking, infeasible=infeasible)
+    total_cost = model.getObjVal()
+
+    hourly_costs = []
+    for t in range(T):
+        cost_t = 0.0
+        for g in range(n_gen):
+            ca = generators[g]["cost_a"]
+            cb = generators[g]["cost_b"]
+            cc = generators[g]["cost_c"]
+            cost_t += ca * p_val[g, t] ** 2 + cb * p_val[g, t] + cc * u_val[g, t]
+        hourly_costs.append(cost_t)
+
+    congested_lines = []
+    for t in range(T):
+        demand = grid.power_demand[:, t]
+        inj_val = np.zeros(n_bus)
+        for g in range(n_gen):
+            inj_val[generators[g]["bus"] - 1] += p_val[g, t]
+        for b in range(n_bat):
+            inj_val[bat_locs[b] - 1] += rm_val[b, t] - rp_val[b, t]
+        net_val  = inj_val - demand
+        flow_val = PTDF @ net_val
+        congested = [i for i in range(len(fbar)) if abs(flow_val[i]) > fbar[i] * 0.999]
+        congested_lines.append(congested)
+
+    uc_result = UCResult(
+        dispatch=p_val,
+        battery_charge=rp_val,
+        battery_discharge=rm_val,
+        soc=soc_val,
+        total_cost=total_cost,
+        hourly_costs=hourly_costs,
+        congested_lines=congested_lines,
+        commitment=u_val,
+        startups=v_val,
+    )
+
+    return SitingMIPResult(
+        bus_tuple=bus_tuple,
+        bat_locs=bat_locs,
+        uc_result=uc_result,
+        total_cost=total_cost,
+    )
