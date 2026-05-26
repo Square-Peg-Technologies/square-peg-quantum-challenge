@@ -43,6 +43,101 @@ except Exception:
 
 
 # ---------------------------------------------------------------------------
+# PTDF-based congestion signal (Option 2 proxy enhancement)
+# ---------------------------------------------------------------------------
+
+def _compute_shadow_prices(grid, generators: list[dict], T: int) -> np.ndarray:
+    """Run a no-battery DC-OPF and return line shadow prices (n_line x T).
+
+    Shadow price[l,t] = mu_up[l,t] - mu_dn[l,t], positive when upper limit binds.
+    Returns zeros array on solve failure so the proxy degrades gracefully.
+    """
+    try:
+        import cvxpy as cp
+    except ImportError:
+        _dbg.warning("cvxpy not available — congestion signal skipped")
+        n_line = np.array(grid.PTDF).shape[0]
+        return np.zeros((n_line, T))
+
+    PTDF   = np.array(grid.PTDF)             # (n_line, n_bus)
+    fbar   = np.array(grid.fbar).flatten()   # (n_line,)
+    demand = np.array(grid.power_demand)     # (n_bus, T)
+    n_gen  = len(generators)
+    n_bus  = PTDF.shape[1]
+    n_line = PTDF.shape[0]
+    gen_buses = [gen["bus"] - 1 for gen in generators]
+
+    p = cp.Variable((n_gen, T), nonneg=True)
+    constraints, balance_cons, flow_up_cons, flow_dn_cons = [], [], [], []
+    obj_terms = []
+
+    for t in range(T):
+        inj = cp.Constant(np.zeros(n_bus))
+        for g in range(n_gen):
+            e = np.zeros(n_bus)
+            e[gen_buses[g]] = 1.0
+            inj = inj + e * p[g, t]
+        d_t = demand[:, t]
+        c_bal = cp.sum(inj) == float(d_t.sum())
+        constraints.append(c_bal)
+        balance_cons.append(c_bal)
+        flow = PTDF @ (inj - d_t)
+        c_up = flow <= fbar
+        c_dn = flow >= -fbar
+        constraints += [c_up, c_dn]
+        flow_up_cons.append(c_up)
+        flow_dn_cons.append(c_dn)
+        for g, gen in enumerate(generators):
+            constraints += [p[g, t] >= gen["p_min"], p[g, t] <= gen["p_max"]]
+        for g, gen in enumerate(generators):
+            a, b, c = gen["cost_a"], gen["cost_b"], gen["cost_c"]
+            obj_terms.append(a * cp.sum_squares(p[g, t]) + b * p[g, t] + c)
+
+    prob = cp.Problem(cp.Minimize(cp.sum(obj_terms)), constraints)
+    prob.solve(solver="HIGHS", verbose=False)
+
+    if prob.status not in ("optimal", "optimal_inaccurate"):
+        _dbg.warning("No-battery OPF status=%s — congestion signal zeroed", prob.status)
+        return np.zeros((n_line, T))
+
+    shadow_prices = np.zeros((n_line, T))
+    for t in range(T):
+        mu_up = np.array(flow_up_cons[t].dual_value).flatten()
+        mu_dn = np.array(flow_dn_cons[t].dual_value).flatten()
+        shadow_prices[:, t] = mu_up - mu_dn
+    return shadow_prices
+
+
+def compute_congestion_signal(
+    ptdf: np.ndarray,
+    shadow_prices: np.ndarray,
+    p_bat: float,
+) -> np.ndarray:
+    """Per-bus congestion relief signal from PTDF x shadow-price dot product.
+
+    For each bus i: signal[i] = p_bat * sum_l (-PTDF[l,i] * mu_mean[l])
+
+    Positive signal means placing a battery here tends to relieve congestion
+    on binding lines; negative means it worsens congestion.
+
+    Parameters
+    ----------
+    ptdf          : (n_line, n_bus) PTDF matrix
+    shadow_prices : (n_line, T) shadow prices from no-battery DC-OPF
+    p_bat         : battery power rating (MW) — scales signal to $/h units
+
+    Returns
+    -------
+    signal : (n_bus,) array, units $/h
+    """
+    mu_mean = shadow_prices.mean(axis=1)          # (n_line,) time-average
+    # signal[i] = p_bat * sum_l (-PTDF[l,i] * mu_mean[l])
+    # = -p_bat * PTDF.T @ mu_mean
+    signal = -p_bat * (ptdf.T @ mu_mean)          # (n_bus,)
+    return signal
+
+
+# ---------------------------------------------------------------------------
 # Proxy cost function (lazy classical evaluation from bitstring)
 # ---------------------------------------------------------------------------
 
@@ -52,16 +147,21 @@ def build_proxy_cost_fn(
     n_buses: int,
     demand_ref: float,
     T: int = 1,
+    congestion_signal: np.ndarray | None = None,
 ) -> tuple[Callable[[str], float], float, float]:
     """Return (proxy_fn, lambda1, lambda2) for lazy Q(u,s) evaluation.
 
     proxy_fn(bitstring: str) -> float
         Bitstring layout: u_0..u_{G-1} s_0..s_{N-1} (index 0 = leftmost char).
-        Returns Q(u, s) = c_min(u) + lambda1*P_budget(s) + lambda2*P_infeas(u,s).
+        Returns Q(u, s) = c_min(u) + lambda1*P_budget(s) + lambda2*P_infeas(u,s)
+                        - P_loc(s)
+        where P_loc(s) = T * sum_i s_i * congestion_signal[i] (congestion relief bonus).
 
     lambda1, lambda2 are the BQM lambdas (D-Wave path, per-hour scaling).
     proxy_fn uses T-scaled lambdas with a one-sided infeasibility penalty so that
     over-capacity combinations are not penalised (only shortfall is penalised).
+    congestion_signal: optional (n_buses,) array from compute_congestion_signal();
+        if None the P_loc term is omitted.
     """
     G = len(generators)
     B = len(batteries)
@@ -85,6 +185,11 @@ def build_proxy_cost_fn(
     _lam1 = c_min_total * 2.0
     _lam2 = c_min_total * 20.0 / (demand_ref ** 2 + 1e-6)
 
+    # Precompute per-bus congestion bonus scaled to horizon ($/horizon)
+    _cong = None
+    if congestion_signal is not None:
+        _cong = np.asarray(congestion_signal, dtype=float) * T
+
     def proxy_fn(bitstring: str) -> float:
         u = [int(bitstring[g]) for g in range(G)]
         s = [int(bitstring[G + i]) for i in range(n_buses)]
@@ -103,7 +208,12 @@ def build_proxy_cost_fn(
         )
         p_infeas = shortfall ** 2
 
-        return c_min_val + _lam1 * p_budget + _lam2 * p_infeas
+        # P_loc: subtract congestion relief bonus for each placed battery
+        p_loc = 0.0
+        if _cong is not None:
+            p_loc = sum(s[i] * _cong[i] for i in range(n_buses))
+
+        return c_min_val + _lam1 * p_budget + _lam2 * p_infeas - p_loc
 
     return proxy_fn, lambda1, lambda2
 
@@ -119,10 +229,13 @@ def build_bqm(
     demand_ref: float,
     lambda1: float,
     lambda2: float,
+    congestion_signal: np.ndarray | None = None,
 ):
     """Build a dimod.BinaryQuadraticModel encoding Q(u, s).
 
     Variable naming: u_g for generator g, s_i for bus i.
+    congestion_signal: optional (n_buses,) array from compute_congestion_signal();
+        adds a linear bias -signal[i] to each s_i (congestion relief bonus, $/h).
     Returns the BQM (vartype=BINARY).
     """
     import dimod
@@ -179,6 +292,12 @@ def build_bqm(
             bqm.add_interaction(f"u_{g}", f"s_{i}", lambda2 * 2 * p_max_vals[g] * P_bat)
 
     bqm.offset += lambda2 * D ** 2
+
+    # P_loc: congestion relief bonus — subtract signal[i] from linear bias of s_i
+    if congestion_signal is not None:
+        cong = np.asarray(congestion_signal, dtype=float)
+        for i in range(n_buses):
+            bqm.add_variable(f"s_{i}", -float(cong[i]))
 
     return bqm
 
@@ -461,8 +580,19 @@ def run_quantum_siting(
     G = len(generators)
     B = len(batteries)
 
+    # Compute congestion signal from no-battery DC-OPF shadow prices
+    ptdf = np.array(grid.PTDF)
+    shadow_prices = _compute_shadow_prices(grid, generators, T)
+    p_bat = batteries[0]["power_mw"]
+    congestion_signal = compute_congestion_signal(ptdf, shadow_prices, p_bat)
+    _dbg.debug(
+        "Congestion signal ($/h): %s",
+        ", ".join(f"bus{i+1}={v:.1f}" for i, v in enumerate(congestion_signal)),
+    )
+
     proxy_fn, lambda1, lambda2 = build_proxy_cost_fn(
-        generators, batteries, n_buses, demand_ref, T
+        generators, batteries, n_buses, demand_ref, T,
+        congestion_signal=congestion_signal,
     )
 
     # ── Quantum sieve ────────────────────────────────────────────────────────
@@ -487,7 +617,10 @@ def run_quantum_siting(
         quantum_candidates = feasible[:n_candidates]
 
     else:  # "dwave"
-        bqm = build_bqm(generators, batteries, n_buses, demand_ref, lambda1, lambda2)
+        bqm = build_bqm(
+            generators, batteries, n_buses, demand_ref, lambda1, lambda2,
+            congestion_signal=congestion_signal,
+        )
         quantum_candidates = run_dwave_sa(
             bqm=bqm,
             n_qubits_gen=G,

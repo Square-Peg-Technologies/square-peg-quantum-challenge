@@ -144,12 +144,19 @@ Quantum siting: 5 gen + 14 bus = 19 qubits, C(14,4) = 1,001 placements.
 Datacenter bus selection: buses 3 and 6-14 are infeasible (line limits violated).
 Feasible buses ranked by total 24h ED cost:
 
-    Rank    Bus    24h Cost ($)    Notes
-    ----    ---    ------------    -----
-    1        1       228,429       Swing bus; cheapest
-    2        2       228,429       Near Gen 2
-    3        4       231,178       Moderate congestion on 2-4, 2-5 lines
-    4        5       234,906       Congested via 1-5 line
+    Rank    Bus    24h Cost ($)    Congestion    Notes
+    ----    ---    ------------    ----------    -----
+    1        1       228,429       None          Co-located with Gen 1 swing bus; no line binding
+    2        2       228,429       None          Near Gen 2; no line binding
+    3        4       231,178       Yes           Binds lines 1-5 and 2-4 at peak hours
+    4        5       234,906       Yes           Binds line 1-5 at peak hours
+
+IMPORTANT — for meaningful congestion and a non-trivial P_loc(s) battery signal,
+use assets_dc_bus4.py or assets_dc_bus5.py. With the datacenter at bus 1 or bus 2
+the network is uncongested: all buses price identically and the P_loc term
+contributes zero to the proxy cost. Bus 4 and bus 5 force the optimizer to route
+power through tight transformers and mid-network lines, creating spatial LMP
+differentiation and a meaningful congestion relief signal for battery siting.
 
 Run site_datacenter.py to regenerate these rankings after any change to
 line limits or datacenter size:
@@ -162,7 +169,7 @@ Best placement buses (2, 4, 6, 7), cost $199,804 in ~2.5 min on RTX 3080 Ti.
 ### LMP and Shadow Price Extraction
 
 use_cases/ieee14/extract_lmps.py runs a no-battery DC-OPF on ieee14 and extracts
-the data needed to build the P_loc(s) battery location value term for the QUBO proxy:
+LMPs and shadow prices for analysis:
 
     .venv/bin/python use_cases/ieee14/extract_lmps.py
 
@@ -176,12 +183,13 @@ LMPs are the nodal marginal prices ($/MWh). Shadow prices on binding lines are
 the congestion components — a bus with high PTDF exposure to a binding line has
 high congestion relief value for battery placement.
 
-Note: with the datacenter at Bus 1 (co-located with Gen 1), the current line
-limits do not produce spatial LMP differentiation — all buses price identically
-at $20/MWh (cheap hours) or $40/MWh (peak hours) with no binding lines. The
-P_loc term will have no signal in this configuration. A scenario with the
-datacenter at a more congested bus, or tighter line limits, is needed to create
-meaningful spatial variation. Pending PLEXOS baseline from Andrew.
+The quantum solver computes these internally at runtime (see P_loc below).
+extract_lmps.py is a standalone diagnostic tool for inspection and for sharing
+data with external tools (e.g. PLEXOS baseline comparison).
+
+Note: with the datacenter at bus 1 or bus 2 no lines bind and all shadow prices
+are zero — extract_lmps.py will show uniform LMPs and an empty binding-lines list.
+Use assets_dc_bus4.py or assets_dc_bus5.py for non-trivial output.
 
 
 ## Running the Tool
@@ -235,9 +243,11 @@ Step 4 — assets file (scanned from the use case directory):
 
 ### Example Output (Quantum Siting, ieee14, T=24h)
 
+Use assets_dc_bus4.py or assets_dc_bus5.py to get a non-trivial P_loc signal.
+
     =============================================
-    Run: Quantum Siting | Hours: 24 | Use case: ieee14 | Assets: assets_dc_bus1.py
-    Datacenter: 200 MW flat load injected at Bus 1
+    Run: Quantum Siting | Hours: 24 | Use case: ieee14 | Assets: assets_dc_bus4.py
+    Datacenter: 200 MW flat load injected at Bus 4
     Generators: {Gen 1 (Bus 1, 50.0-332.0 MW, b=$20.0)}
                 {Gen 2 (Bus 2, 20.0-140.0 MW, b=$20.0)}
                 ...
@@ -265,11 +275,12 @@ Step 4 — assets file (scanned from the use case directory):
 
 Proxy cost function (evaluated analytically per sampled bitstring, no solver call):
 
-    Q(u, s) = c_min(u) + λ1 × P_budget(s) + λ2 × P_infeas(u)
+    Q(u, s) = c_min(u) + λ1 × P_budget(s) + λ2 × P_infeas(u) − P_loc(s)
 
     c_min(u)      Lower-bound dispatch cost: T × Σ_g u_g × (a×p_min² + b×p_min + c)
     P_budget(s)   (Σ s_i − B)² — penalises ≠ B batteries placed
     P_infeas(u)   max(0, D_peak − Σ_g u_g × P_max,g)² — generator shortfall penalty
+    P_loc(s)      T × Σ_i s_i × signal_i — congestion relief reward
 
     Batteries are excluded from P_infeas: batteries shift energy across hours
     but cannot create new peak capacity. Generator commitment alone must cover
@@ -277,6 +288,37 @@ Proxy cost function (evaluated analytically per sampled bitstring, no solver cal
 
     λ1 = 2 × c_min,total    (one-battery deviation costs more than max savings)
     λ2 = 20 × c_min,total / D_peak²    (any shortfall dominates c_min savings)
+
+P_loc(s) — congestion relief battery location term:
+
+    Before the quantum sieve, the solver runs a no-battery DC-OPF (CVXPY/HiGHS)
+    on the loaded grid to extract line shadow prices μ_l,t (20 × 24 for ieee14).
+
+    For each bus i:
+        signal_i = P_bat × Σ_l (−PTDF[l,i] × μ_mean,l)
+
+    where μ_mean,l is the time-averaged shadow price on line l ($/MWh), and
+    P_bat is the battery power rating (MW). Units of signal_i are $/h.
+
+    Positive signal_i means a battery injection at bus i tends to reduce flow
+    on binding lines (congestion relief). Negative means it worsens congestion.
+
+    P_loc(s) = T × Σ_i s_i × signal_i  ($/horizon)
+
+    Subtracting P_loc from Q steers the quantum sieve toward buses with high
+    congestion relief value without changing the feasibility structure. The term
+    is in the same dollar units as c_min so no additional λ3 scaling is required.
+
+    The P_loc term is zero when no lines bind (e.g. datacenter at bus 1 or 2).
+    With the datacenter at bus 4, lines 1-5 and 2-4 bind at peak; buses 4-14
+    receive signal values of ~160-302 $/h, with bus 4 highest at ~302 $/h.
+    With the datacenter at bus 5, line 1-5 binds; buses 3-14 receive signal.
+
+    If the no-battery OPF solve fails for any reason, signal defaults to zero
+    and the proxy degrades gracefully to the original three-term form.
+
+    D-Wave BQM path: the same signal is applied as a linear bias on each s_i
+    variable (−signal_i added to the BQM linear coefficient for s_i).
 
 Qubit encoding: [u_0 ... u_{G-1}  s_0 ... s_{N-1}]
 All counts (G, N, B) are resolved from the loaded assets at runtime — nothing
@@ -344,12 +386,13 @@ rather than any system-level installation.
         ieee14/
             ieee14.py           IEEE 14-bus grid: 14 buses, 20 branches, 5 generators.
             assets.py           5 generators, 4 batteries, no datacenter (base template).
-            assets_dc_bus1.py   Datacenter at bus 1, 200 MW (cheapest — use this).
-            assets_dc_bus2.py   Datacenter at bus 2.
-            assets_dc_bus4.py   Datacenter at bus 4.
-            assets_dc_bus5.py   Datacenter at bus 5.
+            assets_dc_bus1.py   Datacenter at bus 1, 200 MW. No congestion — P_loc is zero.
+            assets_dc_bus2.py   Datacenter at bus 2, 200 MW. No congestion — P_loc is zero.
+            assets_dc_bus4.py   Datacenter at bus 4, 200 MW. Congested — use for P_loc signal.
+            assets_dc_bus5.py   Datacenter at bus 5, 200 MW. Congested — use for P_loc signal.
             locations.py        Fixed generator locations; placeholder battery locations.
             site_datacenter.py  Sweeps all 14 buses, ranks by ED cost, writes assets files.
+            extract_lmps.py     Standalone diagnostic: exports LMPs and shadow prices to CSV.
 
     solvers/
         results.py          EDResult, UCResult, SitingResult, QuantumSitingResult.
@@ -357,6 +400,12 @@ rather than any system-level installation.
         uc.py               Unit Commitment (MIQP, SCIP). Generic — works for any grid size.
         siting.py           Exhaustive battery siting loop.
         quantum_siting.py   VQA/SA sieve + classical refinement + debug logger.
+                            Key functions:
+                              _compute_shadow_prices  — no-battery DC-OPF to get line duals
+                              compute_congestion_signal — PTDF × shadow-price per-bus signal
+                              build_proxy_cost_fn     — proxy Q(u,s) including P_loc term
+                              build_bqm               — D-Wave QUBO including P_loc bias
+                              run_quantum_siting      — top-level pipeline orchestrator
 
     tests/
         test_ed.py              ED feasibility, power balance, generator limits, SoC.
