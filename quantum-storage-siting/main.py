@@ -277,7 +277,8 @@ def print_results(
         return
 
     if isinstance(result, SitingMIPResult):
-        print(f"\nOptimal battery placement: buses {result.bus_tuple}")
+        label = "Best placement found (time limit hit)" if result.scip_status == "timelimit" else "Optimal battery placement"
+        print(f"\n{label}: buses {result.bus_tuple}")
         print(f"Total cost: ${result.total_cost:,.0f}")
         result = result.uc_result   # fall through to UC display below
 
@@ -413,7 +414,7 @@ def main():
 
     from solvers.ed import run_ed
     from solvers.uc import run_uc
-    from solvers.siting_mip import run_siting_mip
+    from solvers.siting_benders import run_siting_benders
     from solvers.quantum_siting import run_quantum_siting
 
     t_start = time.perf_counter()
@@ -422,7 +423,9 @@ def main():
     elif opt == 2:
         result = run_uc(grid, generators, batteries, bat_locs, T)
     elif opt == 3:
-        result = run_siting_mip(grid, generators, batteries, T)
+        tl = input("Time limit in seconds (default 120): ").strip()
+        time_limit_s = float(tl) if tl else 120.0
+        result = run_siting_benders(grid, generators, batteries, T, time_limit_s=time_limit_s)
     else:
         backend, n_candidates, second_stage = quantum_opts
         if backend == "qiskit":
@@ -452,11 +455,12 @@ def main():
     print(f"Solver time: {time_str}")
 
     print_results(result, opt_name, T, generators, batteries)
-    if not isinstance(result, (SitingResult, QuantumSitingResult)):
-        save_plot(result, opt_name, T, assets_file_name, grid=grid)
-        save_overview(result, opt_name, T, assets_file_name, generators, batteries, grid)
-    elif isinstance(result, SitingResult):
-        save_plot(result, opt_name, T, assets_file_name, grid=grid)
+    plot_result = result.uc_result if isinstance(result, SitingMIPResult) else result
+    if not isinstance(plot_result, (SitingResult, QuantumSitingResult)):
+        save_plot(plot_result, opt_name, T, assets_file_name, grid=grid)
+        save_overview(plot_result, opt_name, T, assets_file_name, generators, batteries, grid)
+    elif isinstance(plot_result, SitingResult):
+        save_plot(plot_result, opt_name, T, assets_file_name, grid=grid)
 
 
 if __name__ == "__main__":

@@ -354,6 +354,28 @@ def run_dwave_sa(
 # Classical second-stage evaluation
 # ---------------------------------------------------------------------------
 
+def _eval_one(args: tuple):
+    """Top-level worker for parallel candidate evaluation (must be picklable)."""
+    import copy
+    bat_locs, commitment, grid, generators, batteries, T, second_stage = args
+    try:
+        if second_stage == "ed":
+            from solvers.ed import run_ed
+            gens_modified = copy.deepcopy(generators)
+            for g, on in enumerate(commitment):
+                if not on:
+                    gens_modified[g]["p_min"] = 0.0
+                    gens_modified[g]["p_max"] = 0.0
+            gen_locs = {g: gen["bus"] for g, gen in enumerate(gens_modified)}
+            result_obj = run_ed(grid, gens_modified, batteries, gen_locs, bat_locs, T)
+        else:
+            from solvers.uc import run_uc
+            result_obj = run_uc(grid, generators, batteries, bat_locs, T)
+        return (bat_locs, commitment, result_obj.total_cost, result_obj)
+    except Exception:
+        return None
+
+
 def evaluate_candidates(
     candidates: list[tuple],
     grid,
@@ -365,54 +387,37 @@ def evaluate_candidates(
     """Evaluate each (u_bits, s_bits, proxy_cost) candidate via ED or UC.
 
     Returns list of (bat_locs, commitment, true_cost, result_obj).
+    Candidates are evaluated in parallel using all available CPU cores.
     second_stage: "ed" | "uc"
     """
-    import copy
-    from solvers.ed import run_ed
-    from solvers.uc import run_uc
+    from concurrent.futures import ProcessPoolExecutor
+    from solvers.siting_benders import _GridData
 
-    results = []
+    # Make grid picklable for subprocess workers
+    grid_data = _GridData(grid)
+
+    # Decode and deduplicate before dispatch
     seen_bat_locs: set[tuple] = set()
-
+    work_items = []
     for u_bits, s_bits, _proxy_cost in candidates:
-        # Decode battery locations: bus indices (1-indexed) where s_i == 1
         placed_buses = [i + 1 for i, b in enumerate(s_bits) if b == "1"]
         bat_locs = {bat_idx: bus for bat_idx, bus in enumerate(placed_buses)}
-
-        # Decode generator commitment
         commitment = [int(b) for b in u_bits]
-
-        # For UC, same bat_locs always produces the same result — skip duplicates
         bat_locs_key = tuple(bat_locs.values())
         if second_stage == "uc":
             if bat_locs_key in seen_bat_locs:
                 continue
             seen_bat_locs.add(bat_locs_key)
+        work_items.append((bat_locs, commitment, grid_data, generators, batteries, T, second_stage))
 
-        try:
-            if second_stage == "ed":
-                # Fix commitment: zero p_min/p_max for off generators
-                gens_modified = copy.deepcopy(generators)
-                for g, on in enumerate(commitment):
-                    if not on:
-                        gens_modified[g]["p_min"] = 0.0
-                        gens_modified[g]["p_max"] = 0.0
-
-                # gen_locs: each generator's bus (from the generator dict)
-                gen_locs = {g: gen["bus"] for g, gen in enumerate(gens_modified)}
-                result_obj = run_ed(grid, gens_modified, batteries, gen_locs, bat_locs, T)
-                true_cost = result_obj.total_cost
-
-            else:  # "uc"
-                result_obj = run_uc(grid, generators, batteries, bat_locs, T)
-                true_cost = result_obj.total_cost
-
-            _dbg.debug("PASS bat_locs=%s commit=%s cost=%.0f", bat_locs, commitment, true_cost)
-            results.append((bat_locs, commitment, true_cost, result_obj))
-
-        except (RuntimeError, Exception) as e:
-            _dbg.debug("FAIL bat_locs=%s commit=%s error=%s", bat_locs, commitment, e)
-            continue
+    n_workers = min(len(work_items), os.cpu_count() or 1)
+    results = []
+    with ProcessPoolExecutor(max_workers=n_workers) as pool:
+        for outcome in pool.map(_eval_one, work_items):
+            if outcome is not None:
+                bat_locs, commitment, true_cost, result_obj = outcome
+                _dbg.debug("PASS bat_locs=%s commit=%s cost=%.0f", bat_locs, commitment, true_cost)
+                results.append(outcome)
 
     return results
 

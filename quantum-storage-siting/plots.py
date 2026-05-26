@@ -380,8 +380,8 @@ def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteri
     hours = list(range(1, T + 1))
     is_uc = hasattr(result, "commitment")
 
-    gen_colors = ["#e05c3a", "#5b8dd9", "#2ca02c"]
-    bat_colors = ["#9467bd", "#8c564b"]
+    gen_colors = ["#e05c3a", "#5b8dd9", "#2ca02c", "#d62728", "#ff7f0e", "#1f77b4", "#8c564b", "#bcbd22"]
+    bat_colors = ["#9467bd", "#8c564b", "#17becf", "#e377c2", "#7f7f7f", "#bcbd22"]
 
     fig, axes = plt.subplots(4, 1, figsize=(13, 11), sharex=True)
     fig.suptitle(

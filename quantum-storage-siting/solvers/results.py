@@ -38,6 +38,7 @@ class SitingMIPResult:
     bat_locs: dict          # {battery_index: bus_number}  (1-indexed)
     uc_result: UCResult     # full UC schedule for the optimal placement
     total_cost: float
+    scip_status: str = "optimal"  # "optimal" | "timelimit" (best found so far)
 
 
 @dataclass

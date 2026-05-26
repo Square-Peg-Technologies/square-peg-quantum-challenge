@@ -1,10 +1,21 @@
+import os
+
 import numpy as np
 from pyscipopt import Model, quicksum
 
 from .results import UCResult, SitingMIPResult
 
 
-def run_siting_mip(grid, generators, batteries, T) -> SitingMIPResult:
+def _batteries_identical(b1, b2):
+    return (
+        b1["power_mw"]     == b2["power_mw"]
+        and b1["capacity_mwh"] == b2["capacity_mwh"]
+        and b1["efficiency"]   == b2["efficiency"]
+        and b1["init_soc"]     == b2["init_soc"]
+    )
+
+
+def run_siting_mip(grid, generators, batteries, T, time_limit_s: float = 120.0) -> SitingMIPResult:
     """Joint battery-siting + unit-commitment MILP via PySCIPOpt.
 
     Finds the globally optimal battery bus placement and generator commitment
@@ -31,6 +42,11 @@ def run_siting_mip(grid, generators, batteries, T) -> SitingMIPResult:
 
     model = Model("battery_siting")
     model.hideOutput()
+
+    # Parallel branch-and-bound — use all available cores
+    n_threads = os.cpu_count() or 1
+    model.setIntParam("parallel/maxnthreads", n_threads)
+    model.setRealParam("limits/time", time_limit_s)
 
     # ── Variables ─────────────────────────────────────────────────────────────
 
@@ -131,9 +147,16 @@ def run_siting_mip(grid, generators, batteries, T) -> SitingMIPResult:
     for b in range(n_bat):
         model.addConsSOS1([x[b, n] for n in range(n_bus)])
 
+    # Symmetry breaking: for identical batteries, enforce ascending bus index order.
+    # Eliminates n_bat! equivalent permutation solutions from the search tree.
+    for b in range(n_bat - 1):
+        if _batteries_identical(batteries[b], batteries[b + 1]):
+            model.addCons(
+                quicksum(n * x[b, n] for n in range(n_bus))
+                <= quicksum(n * x[b + 1, n] for n in range(n_bus))
+            )
+
     # ── Big-M linearisation ───────────────────────────────────────────────────
-    # With SOS1 branching, x[b,n] is fixed early in the tree, making the
-    # big-M constraints tight at each node — no LP relaxation weakness.
 
     for b in range(n_bat):
         M = batteries[b]["power_mw"]
@@ -145,6 +168,16 @@ def run_siting_mip(grid, generators, batteries, T) -> SitingMIPResult:
                 model.addCons(y_minus[b, n, t] <= r_minus[b, t])
                 model.addCons(y_minus[b, n, t] <= M * x[b, n])
                 model.addCons(y_minus[b, n, t] >= r_minus[b, t] - M * (1 - x[b, n]))
+
+    # ── Flow equality cuts (LP relaxation tightening) ─────────────────────────
+    # Redundant when x is integer, but force the LP at each node to correctly
+    # attribute all battery power to exactly one bus — tightens the LP bound
+    # and reduces the number of B&B nodes SCIP needs to explore.
+
+    for b in range(n_bat):
+        for t in range(T):
+            model.addCons(quicksum(y_plus[b, n, t]  for n in range(n_bus)) == r_plus[b, t])
+            model.addCons(quicksum(y_minus[b, n, t] for n in range(n_bus)) == r_minus[b, t])
 
     # ── Power balance and line flow constraints ───────────────────────────────
 
@@ -171,13 +204,73 @@ def run_siting_mip(grid, generators, batteries, T) -> SitingMIPResult:
             model.addCons(flow_l <=  fbar[l])
             model.addCons(flow_l >= -fbar[l])
 
+    # ── Warm start (greedy heuristic) ────────────────────────────────────────
+    # Build a simple feasible-looking solution: place batteries evenly across
+    # buses, commit all generators, split demand proportionally by p_max, set
+    # batteries idle.  SCIP validates and uses it only if it is truly feasible;
+    # an infeasible hint is silently discarded.
+
+    try:
+        step        = max(1, n_bus // max(n_bat, 1))
+        bat_locs_ws = {b: (b * step) % n_bus + 1 for b in range(n_bat)}
+
+        p_max_total = sum(generators[g]["p_max"] for g in range(n_gen))
+
+        sol = model.createSol()
+
+        for b in range(n_bat):
+            nc = bat_locs_ws[b] - 1
+            for n in range(n_bus):
+                model.setSolVal(sol, x[b, n], 1.0 if n == nc else 0.0)
+
+        for g in range(n_gen):
+            frac = generators[g]["p_max"] / p_max_total
+            for t in range(T):
+                demand_t  = float(grid.power_demand[:, t].sum())
+                pg        = min(generators[g]["p_max"],
+                                max(generators[g]["p_min"], frac * demand_t))
+                model.setSolVal(sol, p[g, t], pg)
+                model.setSolVal(sol, u[g, t], 1)
+                model.setSolVal(sol, v[g, t], 1 if t == 0 else 0)
+
+        for b in range(n_bat):
+            nc   = bat_locs_ws[b] - 1
+            soc0 = batteries[b]["init_soc"]
+            for t in range(T):
+                model.setSolVal(sol, r_plus[b, t],  0.0)
+                model.setSolVal(sol, r_minus[b, t], 0.0)
+                model.setSolVal(sol, soc[b, t],     soc0)
+                model.setSolVal(sol, z[b, t],       1)
+                for n in range(n_bus):
+                    model.setSolVal(sol, y_plus[b, n, t],  0.0)
+                    model.setSolVal(sol, y_minus[b, n, t], 0.0)
+
+        if quad_terms:
+            qv = sum(
+                generators[g]["cost_a"]
+                * min(generators[g]["p_max"],
+                      max(generators[g]["p_min"],
+                          generators[g]["p_max"] / p_max_total
+                          * float(grid.power_demand[:, t].sum()))) ** 2
+                for g in range(n_gen) for t in range(T)
+                if generators[g]["cost_a"] != 0.0
+            )
+            model.setSolVal(sol, q_quad, qv)
+
+        model.addSol(sol)
+
+    except Exception:
+        pass  # warm start failed; SCIP will find its own initial solution
+
     # ── Solve ─────────────────────────────────────────────────────────────────
 
     model.optimize()
 
     status = model.getStatus()
-    if status not in ("optimal", "bestsol"):
+    if status not in ("optimal", "bestsol", "timelimit"):
         raise RuntimeError(f"SCIP did not find a feasible solution (status: {status})")
+    if status == "timelimit" and model.getNSols() == 0:
+        raise RuntimeError("SCIP hit the time limit before finding any feasible solution")
 
     # ── Extract solution ──────────────────────────────────────────────────────
 
@@ -238,4 +331,5 @@ def run_siting_mip(grid, generators, batteries, T) -> SitingMIPResult:
         bat_locs=bat_locs,
         uc_result=uc_result,
         total_cost=total_cost,
+        scip_status=status,
     )
