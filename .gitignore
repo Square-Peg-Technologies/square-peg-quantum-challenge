@@ -6,3 +6,4 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 quantum-storage-siting/outputs/quantum_siting_debug.log
+quantum-storage-siting/docs/

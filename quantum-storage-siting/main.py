@@ -12,7 +12,7 @@ def prompt_optimization() -> int:
         print("Select optimization to run:")
         print("  1. Economic Dispatch (ED)")
         print("  2. Unit Commitment (UC)")
-        print("  3. Battery Siting (exhaustive search)")
+        print("  3. Battery Siting (MIP, top-K)")
         print("  4. Quantum Siting (Hybrid VQA + Classical)")
         raw = input("Enter number: ").strip()
         if raw in ("1", "2", "3", "4"):
@@ -31,6 +31,21 @@ def prompt_hours() -> int:
         if 1 <= val <= 24:
             return val
         print("Invalid input. Please enter a whole number between 1 and 24.")
+
+
+def prompt_n_results() -> int:
+    while True:
+        raw = input("How many top placements to return? (default 10): ").strip()
+        if raw == "":
+            return 10
+        try:
+            val = int(raw)
+        except ValueError:
+            print("Invalid input. Please enter a whole number.")
+            continue
+        if val >= 1:
+            return val
+        print("Must be at least 1.")
 
 
 def prompt_use_case() -> tuple[str, str]:
@@ -278,19 +293,15 @@ def print_results(
 
     if isinstance(result, SitingResult):
         print("\nBattery Siting Results (ranked by total cost):")
-        print(f"{'Rank':<6} {'Bus Pair':<12} {'Total Cost ($)':>16} {'Congested Hrs':>14}")
-        print("-" * 54)
-        for rank, (bus_pair, total_cost, uc_result) in enumerate(result.ranking, start=1):
-            pair_str = f"({bus_pair[0]}, {bus_pair[1]})"
+        print(f"{'Rank':<6} {'Bus Placement':<20} {'Total Cost ($)':>16} {'Congested Hrs':>14}")
+        print("-" * 62)
+        for rank, (bus_tuple, total_cost, uc_result) in enumerate(result.ranking, start=1):
+            placement_str = str(bus_tuple)
             cong_hrs = sum(1 for lines in uc_result.congested_lines if lines)
-            print(f"{rank:<6} {pair_str:<12} {total_cost:>16,.0f} {cong_hrs:>14}")
-        if result.infeasible:
-            print("\nInfeasible placements (line limits unsatisfiable at peak hours):")
-            for bus_a, bus_b in result.infeasible:
-                print(f"  Buses ({bus_a}, {bus_b})")
+            print(f"{rank:<6} {placement_str:<20} {total_cost:>16,.0f} {cong_hrs:>14}")
         if result.ranking:
-            best_pair, best_cost, _ = result.ranking[0]
-            print(f"\nBest placement: buses {best_pair[0]} and {best_pair[1]}, cost ${best_cost:.0f}")
+            best_tuple, best_cost, _ = result.ranking[0]
+            print(f"\nBest placement: buses {best_tuple}, cost ${best_cost:.0f}")
         return
 
     is_uc = isinstance(result, UCResult)
@@ -412,7 +423,7 @@ def main():
 
     from solvers.ed import run_ed
     from solvers.uc import run_uc
-    from solvers.siting import run_siting
+    from solvers.siting_mip import run_siting_mip
     from solvers.quantum_siting import run_quantum_siting
 
     t_start = time.perf_counter()
@@ -421,7 +432,8 @@ def main():
     elif opt == 2:
         result = run_uc(grid, generators, batteries, bat_locs, T)
     elif opt == 3:
-        result = run_siting(grid, generators, batteries, T)
+        n_results = prompt_n_results()
+        result = run_siting_mip(grid, generators, batteries, T, n_results)
     else:
         backend, n_candidates, second_stage = quantum_opts
         if backend == "qiskit":
