@@ -303,6 +303,57 @@ def build_bqm(
 
 
 # ---------------------------------------------------------------------------
+# LP relaxation warm-start helper (paper Section III, arXiv:2505.00145)
+# ---------------------------------------------------------------------------
+
+def _solve_lp_relaxation(
+    generators: list[dict],
+    batteries: list[dict],
+    n_buses: int,
+    demand_ref: float,
+    T: int,
+) -> np.ndarray:
+    """Solve the continuous relaxation of the proxy QUBO over [0,1]^n.
+
+    Returns x* ∈ [0,1]^n ordered as [gen_0..gen_{G-1}, bus_0..bus_{N-1}].
+    Maps to initial β angles via β_j = 2·arcsin(√(x_j*)) so the circuit
+    starts in the state closest to the LP-relaxation optimum (paper Section III).
+    """
+    from scipy.optimize import minimize as scipy_minimize
+
+    G = len(generators)
+    B = len(batteries)
+    n = G + n_buses
+
+    c_min_coeffs = np.array([
+        g["cost_a"] * g["p_min"] ** 2 + g["cost_b"] * g["p_min"] + g["cost_c"]
+        for g in generators
+    ])
+    p_max_vals = np.array([g["p_max"] for g in generators])
+
+    c_min_total = float(c_min_coeffs.sum()) * T
+    _lam1 = c_min_total * 2.0
+    _lam2 = c_min_total * 20.0 / (demand_ref ** 2 + 1e-6)
+
+    def q_relax(x: np.ndarray) -> float:
+        x_gen = x[:G]
+        x_bat = x[G:]
+        c_val = float(c_min_coeffs @ x_gen) * T
+        p_budget = (x_bat.sum() - B) ** 2
+        shortfall = max(0.0, demand_ref - float(p_max_vals @ x_gen))
+        return c_val + _lam1 * p_budget + _lam2 * shortfall ** 2
+
+    x0 = np.full(n, 0.5)
+    bounds = [(0.0, 1.0)] * n
+    res = scipy_minimize(q_relax, x0, method="SLSQP", bounds=bounds,
+                         options={"ftol": 1e-9, "maxiter": 500})
+    x_star = np.clip(res.x, 0.0, 1.0)
+    _dbg.debug("LP relaxation x*: gen=%s bat=%s obj=%.4g",
+               x_star[:G].round(3), x_star[G:].round(3), res.fun)
+    return x_star
+
+
+# ---------------------------------------------------------------------------
 # Qiskit VQA path
 # ---------------------------------------------------------------------------
 
@@ -342,14 +393,27 @@ def run_vqa_qiskit(
     proxy_fn: Callable[[str], float],
     n_candidates: int,
     n_layers: int = 3,
-) -> list[tuple]:
-    """Run COBYLA VQA and return top n_candidates feasible bitstrings.
+    warm_start: str = "zeros",
+    track_convergence: bool = False,
+    _sdp_ingredients: dict | None = None,
+) -> tuple[list[tuple], list[float]]:
+    """Run COBYLA VQA and return (candidates, convergence_trace).
 
-    Returns list of (u_bits, s_bits, proxy_cost) sorted ascending by proxy_cost.
+    candidates: list of (u_bits, s_bits, proxy_cost) sorted ascending by proxy_cost.
+    convergence_trace: COBYLA objective value at each function evaluation (empty if
+        track_convergence=False).
+
+    warm_start strategies (arXiv:2505.00145):
+      "zeros"  — θ=0, paper simulation default (Section IV-A)
+      "random" — θ~Uniform[-2π,2π], paper IonQ hardware default (Fig. 6/8)
+      "sdp"    — LP-relaxation warm start, paper Section III mixer design;
+                 requires _sdp_ingredients dict with keys:
+                 generators, batteries, demand_ref, T
     """
     from scipy.optimize import minimize as scipy_minimize
 
     n_qubits = n_qubits_gen + n_qubits_bat
+    n_half = n_layers * n_qubits   # γ block size = β block size
 
     qc, params = build_butterfly_ansatz(n_qubits, n_layers)
 
@@ -366,7 +430,30 @@ def run_vqa_qiskit(
         sampler = StatevectorSampler()
 
     n_shots_cobyla = 512
-    theta0 = np.zeros(len(params))
+
+    if warm_start == "zeros":
+        theta0 = np.zeros(len(params))
+    elif warm_start == "random":
+        rng = np.random.default_rng()
+        theta0 = rng.uniform(-2 * np.pi, 2 * np.pi, len(params))
+    elif warm_start == "sdp":
+        if _sdp_ingredients is None:
+            raise ValueError("warm_start='sdp' requires _sdp_ingredients dict")
+        x_star = _solve_lp_relaxation(
+            generators=_sdp_ingredients["generators"],
+            batteries=_sdp_ingredients["batteries"],
+            n_buses=n_qubits_bat,
+            demand_ref=_sdp_ingredients["demand_ref"],
+            T=_sdp_ingredients["T"],
+        )
+        theta0 = np.zeros(len(params))
+        theta0[n_half:] = 2.0 * np.arcsin(np.sqrt(np.clip(x_star, 0.0, 1.0)))
+    else:
+        raise ValueError(f"Unknown warm_start strategy: {warm_start!r}")
+
+    _dbg.debug("warm_start=%s theta0 β-block mean=%.3f", warm_start, theta0[n_half:].mean())
+
+    convergence_trace: list[float] = []
 
     def objective(theta: np.ndarray) -> float:
         bound = qc.assign_parameters(dict(zip(params, theta)))
@@ -380,7 +467,10 @@ def run_vqa_qiskit(
             val = proxy_fn(bs_ordered)
             if np.isfinite(val):
                 avg_q += (cnt / total) * val
-        return avg_q if np.isfinite(avg_q) else 1e12
+        val_out = avg_q if np.isfinite(avg_q) else 1e12
+        if track_convergence:
+            convergence_trace.append(val_out)
+        return val_out
 
     result = scipy_minimize(
         fun=objective,
@@ -414,7 +504,7 @@ def run_vqa_qiskit(
         if len(candidates) >= n_candidates:
             break
 
-    return candidates
+    return candidates, convergence_trace
 
 
 # ---------------------------------------------------------------------------
@@ -553,19 +643,23 @@ def run_quantum_siting(
     backend: str,
     n_candidates: int,
     second_stage: str,
+    warm_start: str = "zeros",
+    track_convergence: bool = False,
     _num_reads: int | None = None,
 ):
     """Full hybrid quantum-classical siting pipeline.
 
     Parameters
     ----------
-    grid         : PJM 5-bus Case object
-    generators   : list of generator dicts from assets
-    batteries    : list of battery dicts from assets
-    T            : number of hours to simulate
-    backend      : "qiskit" | "dwave"
-    n_candidates : number of candidates to evaluate classically
-    second_stage : "ed" | "uc"
+    grid             : PJM 5-bus Case object
+    generators       : list of generator dicts from assets
+    batteries        : list of battery dicts from assets
+    T                : number of hours to simulate
+    backend          : "qiskit" | "dwave"
+    n_candidates     : number of candidates to evaluate classically
+    second_stage     : "ed" | "uc"
+    warm_start       : "zeros" | "random" | "sdp" (Qiskit path only)
+    track_convergence: record COBYLA objective per iteration (Qiskit path only)
 
     Returns
     -------
@@ -602,11 +696,22 @@ def run_quantum_siting(
         # Qiskit VQA: we wrap proxy_fn with feasibility filter via the sieve
         # The sieve returns top candidates regardless of feasibility; we rely on
         # run_vqa_qiskit to return them sorted by proxy_cost (feasible first via P_budget)
-        raw_candidates = run_vqa_qiskit(
+        _sdp_ingredients = None
+        if warm_start == "sdp":
+            _sdp_ingredients = {
+                "generators": generators,
+                "batteries": batteries,
+                "demand_ref": demand_ref,
+                "T": T,
+            }
+        raw_candidates, convergence_trace = run_vqa_qiskit(
             n_qubits_gen=G,
             n_qubits_bat=n_buses,
             proxy_fn=proxy_fn,
             n_candidates=n_candidates,
+            warm_start=warm_start,
+            track_convergence=track_convergence,
+            _sdp_ingredients=_sdp_ingredients,
         )
 
         # Post-filter to exactly B batteries placed (P_budget == 0)
@@ -617,6 +722,7 @@ def run_quantum_siting(
         quantum_candidates = feasible[:n_candidates]
 
     else:  # "dwave"
+        convergence_trace = []
         bqm = build_bqm(
             generators, batteries, n_buses, demand_ref, lambda1, lambda2,
             congestion_signal=congestion_signal,
@@ -663,4 +769,6 @@ def run_quantum_siting(
         best=best,
         runtime_quantum=runtime_quantum,
         runtime_classical=runtime_classical,
+        warm_start=warm_start if backend == "qiskit" else "zeros",
+        convergence_trace=convergence_trace if track_convergence else None,
     )

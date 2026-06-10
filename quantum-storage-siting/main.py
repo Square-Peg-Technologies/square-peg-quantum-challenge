@@ -169,8 +169,8 @@ def print_header(
     print("=============================================")
 
 
-def prompt_quantum_options() -> tuple[str, int, str]:
-    """Prompt for backend, n_candidates, and second_stage. Returns (backend, n_candidates, second_stage)."""
+def prompt_quantum_options() -> tuple[str, int, str, str]:
+    """Prompt for backend, n_candidates, second_stage, warm_start."""
     while True:
         print("Select quantum backend:")
         print("  1. Qiskit (VQA, local simulator)")
@@ -210,18 +210,42 @@ def prompt_quantum_options() -> tuple[str, int, str]:
             break
         print("Invalid selection. Please enter 1 or 2.")
 
-    return backend, n_candidates, second_stage
+    warm_start = "zeros"
+    if backend == "qiskit":
+        while True:
+            print("Warm-start strategy (arXiv:2505.00145):")
+            print("  1. zeros  — theta=0, paper simulation default [default]")
+            print("  2. random — theta~Uniform[-2pi,2pi], paper IonQ hardware default")
+            print("  3. sdp    — LP-relaxation warm start, paper Section III mixer design")
+            raw = input("Enter number [default: 1]: ").strip()
+            if raw in ("", "1"):
+                warm_start = "zeros"
+                break
+            elif raw == "2":
+                warm_start = "random"
+                break
+            elif raw == "3":
+                warm_start = "sdp"
+                break
+            print("Invalid selection. Please enter 1, 2, or 3.")
+
+    return backend, n_candidates, second_stage, warm_start
 
 
 def print_quantum_results(result: "QuantumSitingResult") -> None:
     backend_label = "Qiskit VQA" if result.backend == "qiskit" else "D-Wave SA"
     stage_label = "ED" if result.second_stage == "ed" else "UC"
 
+    warm_label = {"zeros": "θ=0 (paper sim default)", "random": "θ~Uniform[-2π,2π] (paper hardware)", "sdp": "LP-relaxation (paper Sec III)"}.get(result.warm_start, result.warm_start)
     print(f"\nQuantum Siting Results ({backend_label} + {stage_label} refinement)")
+    if result.backend == "qiskit":
+        print(f"Warm-start:                {warm_label}")
     print(f"Quantum candidates found:   {len(result.quantum_candidates)}")
     print(f"Candidates evaluated:       {len(result.evaluated)}")
     print(f"Runtime — quantum sieve:    {result.runtime_quantum:.1f}s")
     print(f"Runtime — classical stage:  {result.runtime_classical:.1f}s")
+    if result.convergence_trace:
+        print(f"COBYLA iterations:         {len(result.convergence_trace)}  (final obj: {result.convergence_trace[-1]:.4g})")
 
     if not result.evaluated:
         print("No feasible candidates found.")
@@ -430,7 +454,7 @@ def main():
         time_limit_s = float(tl) if tl else 120.0
         result = run_siting_benders(grid, generators, batteries, T, time_limit_s=time_limit_s)
     else:
-        backend, n_candidates, second_stage = quantum_opts
+        backend, n_candidates, second_stage, warm_start = quantum_opts
         if backend == "qiskit":
             from solvers.quantum_siting import _AER_AVAILABLE, _GPU_AVAILABLE
             if _AER_AVAILABLE and _GPU_AVAILABLE:
@@ -439,6 +463,7 @@ def main():
                 print("Aer: no GPU — using CPU statevector")
             else:
                 print("Aer: not installed — using Qiskit StatevectorSampler")
+            print(f"Warm-start: {warm_start}")
         result = run_quantum_siting(
             grid=grid,
             generators=generators,
@@ -447,6 +472,8 @@ def main():
             backend=backend,
             n_candidates=n_candidates,
             second_stage=second_stage,
+            warm_start=warm_start,
+            track_convergence=True,
         )
     elapsed = time.perf_counter() - t_start
 

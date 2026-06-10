@@ -51,3 +51,5 @@ class QuantumSitingResult:
     best: tuple                    # entry in evaluated with minimum true_cost
     runtime_quantum: float         # seconds
     runtime_classical: float       # seconds
+    warm_start: str = "zeros"      # "zeros" | "random" | "sdp"
+    convergence_trace: list = None  # COBYLA objective per iteration (Qiskit path only)
