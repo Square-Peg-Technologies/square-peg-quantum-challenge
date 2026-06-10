@@ -15,6 +15,7 @@ Strategies compared:
 
 import argparse
 import importlib.util
+import json
 import os
 import sys
 import time
@@ -228,13 +229,46 @@ def run_comparison(
                     print(f"FAILED: {exc}")
             results_by_strategy[strategy] = trial_results
 
+            # Save per-strategy data so future runs can merge without re-running
+            if trial_results:
+                data_path = os.path.join(output_dir, f"warm_start_{uc_name}_{strategy}.json")
+                payload = {
+                    "use_case": uc_name,
+                    "strategy": strategy,
+                    "n_qubits": n_qubits,
+                    "trials": [
+                        {
+                            "convergence_trace": r["convergence_trace"],
+                            "best_proxy": r["best_proxy"],
+                            "final_obj": r["final_obj"],
+                            "nfev": r["nfev"],
+                            "wall_time": r["wall_time"],
+                        }
+                        for r in trial_results
+                    ],
+                }
+                with open(data_path, "w") as f:
+                    json.dump(payload, f)
+                print(f"    Data saved: {data_path}")
+
+        # ── Load any previously saved strategies not in this run ────────────
+        for s in STRATEGIES:
+            if s not in results_by_strategy or not results_by_strategy[s]:
+                data_path = os.path.join(output_dir, f"warm_start_{uc_name}_{s}.json")
+                if os.path.exists(data_path):
+                    with open(data_path) as f:
+                        saved = json.load(f)
+                    results_by_strategy[s] = saved["trials"]
+                    print(f"  Loaded previous data for strategy '{s}' ({len(saved['trials'])} trial(s))")
+
         # ── Print summary table ──────────────────────────────────────────────
+        all_strategies = [s for s in STRATEGIES if results_by_strategy.get(s)]
         print(f"\n  Summary — {uc_name}")
         hdr = f"  {'Strategy':<10} | {'Final obj (mean±σ)':>22} | {'nfev (mean)':>12} | {'Best proxy (mean)':>18} | {'Gap vs classical':>17} | {'Time (mean)':>12}"
         print(hdr)
         print("  " + "-" * (len(hdr) - 2))
 
-        for strategy in strategies:
+        for strategy in all_strategies:
             trials_data = results_by_strategy[strategy]
             if not trials_data:
                 print(f"  {strategy:<10} | {'N/A':>22} | {'N/A':>12} | {'N/A':>18} | {'N/A':>17} | {'N/A':>12}")
@@ -252,11 +286,11 @@ def run_comparison(
                 f"{best_proxies.mean():>18.4g} | {gap_str:>17} | {times.mean():>10.1f}s"
             )
 
-        # ── Convergence plot ─────────────────────────────────────────────────
+        # ── Convergence plot — merges all available strategies ───────────────
         fig, ax = plt.subplots(figsize=(9, 5))
         colors = {"zeros": "#1f77b4", "random": "#ff7f0e", "sdp": "#2ca02c"}
 
-        for strategy in strategies:
+        for strategy in all_strategies:
             trials_data = results_by_strategy[strategy]
             traces = [r["convergence_trace"] for r in trials_data if r.get("convergence_trace")]
             if not traces:
@@ -268,8 +302,8 @@ def run_comparison(
             mean = padded.mean(axis=0)
             std = padded.std(axis=0)
             iters = _np.arange(1, max_len + 1)
-            ax.plot(iters, mean, label=strategy, color=colors[strategy], linewidth=1.8)
-            ax.fill_between(iters, mean - std, mean + std, alpha=0.2, color=colors[strategy])
+            ax.plot(iters, mean, label=strategy, color=colors.get(strategy, None), linewidth=1.8)
+            ax.fill_between(iters, mean - std, mean + std, alpha=0.2, color=colors.get(strategy, None))
 
         ax.set_xlabel("COBYLA function evaluation")
         ax.set_ylabel("Proxy objective Q(θ)")
