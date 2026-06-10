@@ -131,9 +131,8 @@ def _run_one_trial(
 def _classical_baseline(grid, generators: list, batteries: list, T: int) -> float:
     """Run siting MIP and return the best true cost."""
     try:
-        result = run_siting_mip(grid, generators, batteries, T, n_best=1, time_limit_s=60.0)
-        if result.placements:
-            return result.placements[0][1]
+        result = run_siting_mip(grid, generators, batteries, T, time_limit_s=60.0)
+        return result.total_cost
     except Exception as exc:
         print(f"    [classical baseline failed: {exc}]")
     return float("nan")
@@ -143,10 +142,23 @@ def _classical_baseline(grid, generators: list, batteries: list, T: int) -> floa
 # Main comparison loop
 # ---------------------------------------------------------------------------
 
-def run_comparison(trials: int, n_candidates: int, T: int, output_dir: str) -> None:
+def run_comparison(
+    trials: int,
+    n_candidates: int,
+    T: int,
+    output_dir: str,
+    only_use_case: str | None = None,
+    only_strategies: list[str] | None = None,
+) -> None:
     os.makedirs(output_dir, exist_ok=True)
     use_cases = _discover_use_cases()
-    print(f"Found {len(use_cases)} use case(s): {[n for n, _ in use_cases]}\n")
+    if only_use_case:
+        use_cases = [(n, p) for n, p in use_cases if n == only_use_case]
+        if not use_cases:
+            print(f"Use case '{only_use_case}' not found. Available: {[n for n, _ in _discover_use_cases()]}")
+            return
+    strategies = only_strategies if only_strategies else STRATEGIES
+    print(f"Use cases: {[n for n, _ in use_cases]}  |  Strategies: {strategies}\n")
 
     for uc_name, uc_path in use_cases:
         print(f"{'=' * 60}")
@@ -194,7 +206,7 @@ def run_comparison(trials: int, n_candidates: int, T: int, output_dir: str) -> N
 
         results_by_strategy: dict[str, list[dict]] = {}
 
-        for strategy in STRATEGIES:
+        for strategy in strategies:
             print(f"\n  Strategy: {strategy}  ({trials} trial(s))")
             trial_results = []
             for trial_idx in range(trials):
@@ -209,7 +221,9 @@ def run_comparison(trials: int, n_candidates: int, T: int, output_dir: str) -> N
                         sdp_ingredients=sdp_ingredients,
                     )
                     trial_results.append(r)
-                    print(f"nfev={r['nfev']}  best_proxy={r['best_proxy']:.4g}  t={r['wall_time']:.1f}s")
+                    adaptive_max = max(150, 6 * 2 * 3 * n_qubits)
+                    status = "converged" if r['nfev'] < adaptive_max else "maxiter"
+                    print(f"nfev={r['nfev']}  best_proxy={r['best_proxy']:.4g}  t={r['wall_time']:.1f}s  [{status}]")
                 except Exception as exc:
                     print(f"FAILED: {exc}")
             results_by_strategy[strategy] = trial_results
@@ -220,7 +234,7 @@ def run_comparison(trials: int, n_candidates: int, T: int, output_dir: str) -> N
         print(hdr)
         print("  " + "-" * (len(hdr) - 2))
 
-        for strategy in STRATEGIES:
+        for strategy in strategies:
             trials_data = results_by_strategy[strategy]
             if not trials_data:
                 print(f"  {strategy:<10} | {'N/A':>22} | {'N/A':>12} | {'N/A':>18} | {'N/A':>17} | {'N/A':>12}")
@@ -242,7 +256,7 @@ def run_comparison(trials: int, n_candidates: int, T: int, output_dir: str) -> N
         fig, ax = plt.subplots(figsize=(9, 5))
         colors = {"zeros": "#1f77b4", "random": "#ff7f0e", "sdp": "#2ca02c"}
 
-        for strategy in STRATEGIES:
+        for strategy in strategies:
             trials_data = results_by_strategy[strategy]
             traces = [r["convergence_trace"] for r in trials_data if r.get("convergence_trace")]
             if not traces:
@@ -280,6 +294,8 @@ if __name__ == "__main__":
     parser.add_argument("--trials", type=int, default=3, help="Trials per strategy (default: 3)")
     parser.add_argument("--n-candidates", type=int, default=10, help="Candidates to extract (default: 10)")
     parser.add_argument("--T", type=int, default=4, help="Horizon in hours (default: 4)")
+    parser.add_argument("--use-case", type=str, default=None, help="Run only this use case (e.g. pjm5)")
+    parser.add_argument("--strategies", type=str, default=None, help="Comma-separated strategies to run (e.g. sdp or zeros,sdp)")
     args = parser.parse_args()
 
     output_dir = os.path.join(_PROJECT_ROOT, "outputs")
@@ -288,4 +304,6 @@ if __name__ == "__main__":
         n_candidates=args.n_candidates,
         T=args.T,
         output_dir=output_dir,
+        only_use_case=args.use_case,
+        only_strategies=[s.strip() for s in args.strategies.split(",")] if args.strategies else None,
     )

@@ -410,7 +410,7 @@ def run_vqa_qiskit(
                  requires _sdp_ingredients dict with keys:
                  generators, batteries, demand_ref, T
     """
-    from scipy.optimize import minimize as scipy_minimize
+    from scipy.optimize import fmin_cobyla
 
     n_qubits = n_qubits_gen + n_qubits_bat
     n_half = n_layers * n_qubits   # γ block size = β block size
@@ -446,14 +446,28 @@ def run_vqa_qiskit(
             demand_ref=_sdp_ingredients["demand_ref"],
             T=_sdp_ingredients["T"],
         )
+        # x_star has shape (n_qubits,); β block has shape (n_layers * n_qubits,)
+        # tile across layers so each layer's RY gates start at the warm-start angle
+        x_star_tiled = np.tile(x_star, n_layers)
         theta0 = np.zeros(len(params))
-        theta0[n_half:] = 2.0 * np.arcsin(np.sqrt(np.clip(x_star, 0.0, 1.0)))
+        theta0[n_half:] = 2.0 * np.arcsin(np.sqrt(np.clip(x_star_tiled, 0.0, 1.0)))
     else:
         raise ValueError(f"Unknown warm_start strategy: {warm_start!r}")
 
     _dbg.debug("warm_start=%s theta0 β-block mean=%.3f", warm_start, theta0[n_half:].mean())
 
     convergence_trace: list[float] = []
+
+    # Plateau detection state — stochastic objectives keep COBYLA's trust region
+    # noisy so rhoend never triggers; instead we stop when the best value hasn't
+    # improved by more than 1% in the last `patience` evaluations.
+    _best_val = [float("inf")]
+    _best_theta = [theta0.copy()]
+    _stale = [0]
+    _patience = max(50, len(params))
+
+    class _Plateau(Exception):
+        pass
 
     def objective(theta: np.ndarray) -> float:
         bound = qc.assign_parameters(dict(zip(params, theta)))
@@ -470,17 +484,37 @@ def run_vqa_qiskit(
         val_out = avg_q if np.isfinite(avg_q) else 1e12
         if track_convergence:
             convergence_trace.append(val_out)
+        # Plateau detection: track best and count stale evaluations
+        if val_out < _best_val[0] * 0.99:
+            _best_val[0] = val_out
+            _best_theta[0] = theta.copy()
+            _stale[0] = 0
+        else:
+            _stale[0] += 1
+            if _stale[0] >= _patience:
+                raise _Plateau()
         return val_out
 
-    result = scipy_minimize(
-        fun=objective,
-        x0=theta0,
-        method="COBYLA",
-        options={"maxiter": 300, "rhobeg": 1.0},
-    )
+    # Adaptive maxfun: 6 evals per parameter, min 150 (paper Fig. 2 linear scaling).
+    # fmin_cobyla used directly — scipy.optimize.minimize ignores rhoend.
+    maxfun = max(150, 6 * len(params))
+    _dbg.debug("COBYLA maxfun=%d patience=%d (n_params=%d)", maxfun, _patience, len(params))
+    try:
+        xopt = fmin_cobyla(
+            func=objective,
+            x0=theta0,
+            cons=[],
+            rhobeg=1.0,
+            rhoend=1e-4,
+            maxfun=maxfun,
+            disp=0,
+        )
+    except _Plateau:
+        xopt = _best_theta[0]
+        _dbg.debug("COBYLA stopped early via plateau detection at nfev=%d", len(convergence_trace))
 
     # Final 5000-shot sample
-    final_qc = qc.assign_parameters(dict(zip(params, result.x)))
+    final_qc = qc.assign_parameters(dict(zip(params, xopt)))
     job = sampler.run([final_qc], shots=5000)
     counts = job.result()[0].data.meas.get_counts()
 
