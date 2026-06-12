@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 from pyscipopt import Model, quicksum
@@ -111,6 +111,8 @@ def run_siting_benders(
     time_limit_s: float = 120.0,
     gap_tol: float = 1e-3,
     batch_size: int | None = None,
+    stall_iters: int = 3,
+    stall_rel_tol: float = 1e-4,
 ) -> SitingMIPResult:
     """Battery siting via batch Benders decomposition.
 
@@ -124,6 +126,12 @@ def run_siting_benders(
     gap_tol       : stop when master_LB >= best_cost * (1 - gap_tol)
     batch_size    : UC subproblems evaluated in parallel per Benders iteration.
                     Defaults to os.cpu_count().
+    stall_iters   : stop early after this many consecutive Benders batches with
+                    no incumbent improvement (the master lower bound rises too
+                    slowly for the gap check to ever trigger, so without this
+                    the solver runs to the time limit). 0 disables.
+    stall_rel_tol : a new cost counts as an improvement only if it beats the
+                    incumbent by this relative margin.
     """
     n_bat    = len(batteries)
     grid     = _GridData(grid)          # make picklable for subprocess workers
@@ -139,6 +147,10 @@ def run_siting_benders(
     t_start  = time.perf_counter()
     n_iters  = 0
     n_solved = 0
+    stalled  = False
+    last_improve_iter = 0
+    t_master = 0.0     # accumulated SCIP master solve time
+    t_uc     = 0.0     # accumulated parallel UC subproblem time
 
     while True:
         elapsed   = time.perf_counter() - t_start
@@ -155,7 +167,9 @@ def run_siting_benders(
         batch_x_stars:   list[list]  = []     # list of S_plus per placement
 
         for _ in range(K):
+            _t0 = time.perf_counter()
             master.optimize()
+            t_master += time.perf_counter() - _t0
             status = master.getStatus()
             if status == "infeasible" or (
                 status == "timelimit" and master.getNSols() == 0
@@ -199,8 +213,10 @@ def run_siting_benders(
             (bl, grid, generators, batteries, T)
             for bl in batch_placements
         ]
+        _t0 = time.perf_counter()
         with ProcessPoolExecutor(max_workers=len(args)) as pool:
             outcomes = list(pool.map(_uc_worker, args))
+        t_uc += time.perf_counter() - _t0
 
         # ── Step 3: update best solution + add L-shaped cuts ─────────────────
         master.freeTransform()
@@ -208,6 +224,8 @@ def run_siting_benders(
         for (bat_locs, Z, uc_result), S_plus in zip(outcomes, batch_x_stars):
             n_solved += 1
             if Z < best_cost:
+                if Z < best_cost * (1 - stall_rel_tol) or best_cost == float("inf"):
+                    last_improve_iter = n_iters + 1
                 best_cost     = Z
                 best_result   = uc_result
                 best_bat_locs = dict(bat_locs)
@@ -225,13 +243,21 @@ def run_siting_benders(
 
         n_iters += 1
 
+        # Stall detection: the incumbent has flattened out
+        if (stall_iters > 0 and best_result is not None
+                and n_iters - last_improve_iter >= stall_iters):
+            stalled = True
+            break
+
         elapsed = time.perf_counter() - t_start
         if elapsed >= time_limit_s:
             break
 
         # Final convergence check with all cuts in place
         master.setRealParam("limits/time", time_limit_s - elapsed)
+        _t0 = time.perf_counter()
         master.optimize()
+        t_master += time.perf_counter() - _t0
         if master.getStatus() == "infeasible":
             break
         if master.getObjVal() >= best_cost - gap_tol:
@@ -244,7 +270,18 @@ def run_siting_benders(
 
     bus_tuple  = tuple(best_bat_locs[b] for b in range(n_bat))
     elapsed    = time.perf_counter() - t_start
-    scip_status = "optimal" if elapsed < time_limit_s - 1.0 else "timelimit"
+    if stalled:
+        scip_status = "stalled"
+    elif elapsed < time_limit_s - 1.0:
+        scip_status = "optimal"
+    else:
+        scip_status = "timelimit"
+
+    runtime_phases = {
+        f"Master MIP solves (SCIP, {n_iters} iters)": t_master,
+        f"Parallel UC subproblems ({n_solved} solves)": t_uc,
+        "Cut management + overhead": max(0.0, elapsed - t_master - t_uc),
+    }
 
     return SitingMIPResult(
         bus_tuple   = bus_tuple,
@@ -252,4 +289,5 @@ def run_siting_benders(
         uc_result   = best_result,
         total_cost  = best_cost,
         scip_status = scip_status,
+        runtime_phases = runtime_phases,
     )

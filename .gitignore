@@ -7,3 +7,7 @@ __pycache__/
 .ruff_cache/
 quantum-storage-siting/outputs/quantum_siting_debug.log
 quantum-storage-siting/docs/
+quantum-storage-siting/outputs/dashboard_settings.json
+quantum-storage-siting/outputs/dashboard_history.json
+quantum-storage-siting/outputs/dashboard_runs/
+quantum-storage-siting/outputs/powerflow/

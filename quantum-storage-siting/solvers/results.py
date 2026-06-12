@@ -38,7 +38,8 @@ class SitingMIPResult:
     bat_locs: dict          # {battery_index: bus_number}  (1-indexed)
     uc_result: UCResult     # full UC schedule for the optimal placement
     total_cost: float
-    scip_status: str = "optimal"  # "optimal" | "timelimit" (best found so far)
+    scip_status: str = "optimal"  # "optimal" | "timelimit" | "stalled"
+    runtime_phases: dict = None   # {phase_label: seconds} — wall-time breakdown
 
 
 @dataclass
@@ -53,3 +54,4 @@ class QuantumSitingResult:
     runtime_classical: float       # seconds
     warm_start: str = "zeros"      # "zeros" | "random" | "sdp"
     convergence_trace: list = None  # COBYLA objective per iteration (Qiskit path only)
+    runtime_phases: dict = None    # {phase_label: seconds} — ordered wall-time breakdown

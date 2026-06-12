@@ -396,12 +396,19 @@ def run_vqa_qiskit(
     warm_start: str = "zeros",
     track_convergence: bool = False,
     _sdp_ingredients: dict | None = None,
+    phase_times: dict | None = None,
+    device: str = "auto",
 ) -> tuple[list[tuple], list[float]]:
     """Run COBYLA VQA and return (candidates, convergence_trace).
 
     candidates: list of (u_bits, s_bits, proxy_cost) sorted ascending by proxy_cost.
     convergence_trace: COBYLA objective value at each function evaluation (empty if
         track_convergence=False).
+    phase_times: optional dict filled in-place with wall-time per phase:
+        statevector sampling (accumulated sampler calls during COBYLA),
+        COBYLA classical overhead, and the final 5000-shot extraction.
+    device: "auto" (GPU if available), "GPU" (RuntimeError if unavailable),
+        or "CPU" (forced even when a GPU exists).
 
     warm_start strategies (arXiv:2505.00145):
       "zeros"  — θ=0, paper simulation default (Section IV-A)
@@ -417,9 +424,18 @@ def run_vqa_qiskit(
 
     qc, params = build_butterfly_ansatz(n_qubits, n_layers)
 
+    if device not in ("auto", "GPU", "CPU"):
+        raise ValueError(f"Unknown device: {device!r} (use 'auto', 'GPU', or 'CPU')")
+    if device == "GPU" and not (_AER_AVAILABLE and _GPU_AVAILABLE):
+        raise RuntimeError(
+            "GPU statevector requested but not available — qiskit-aer-gpu is "
+            "missing or no GPU was detected. Use device='CPU' or 'auto'."
+        )
+    use_gpu = _GPU_AVAILABLE if device == "auto" else device == "GPU"
+
     if _AER_AVAILABLE:
         sampler = _AerSamplerV2()
-        if _GPU_AVAILABLE:
+        if use_gpu:
             sampler.options.backend_options = {
                 "method": "statevector", "device": "GPU", "precision": "single"
             }
@@ -457,6 +473,7 @@ def run_vqa_qiskit(
     _dbg.debug("warm_start=%s theta0 β-block mean=%.3f", warm_start, theta0[n_half:].mean())
 
     convergence_trace: list[float] = []
+    _t_sampling = [0.0]   # accumulated wall time inside sampler calls (GPU/CPU statevector)
 
     # Plateau detection state — stochastic objectives keep COBYLA's trust region
     # noisy so rhoend never triggers; instead we stop when the best value hasn't
@@ -471,8 +488,10 @@ def run_vqa_qiskit(
 
     def objective(theta: np.ndarray) -> float:
         bound = qc.assign_parameters(dict(zip(params, theta)))
+        t0 = time.perf_counter()
         job = sampler.run([bound], shots=n_shots_cobyla)
         counts = job.result()[0].data.meas.get_counts()
+        _t_sampling[0] += time.perf_counter() - t0
         total = sum(counts.values())
         avg_q = 0.0
         for bs, cnt in counts.items():
@@ -499,6 +518,7 @@ def run_vqa_qiskit(
     # fmin_cobyla used directly — scipy.optimize.minimize ignores rhoend.
     maxfun = max(150, 6 * len(params))
     _dbg.debug("COBYLA maxfun=%d patience=%d (n_params=%d)", maxfun, _patience, len(params))
+    t_opt_start = time.perf_counter()
     try:
         xopt = fmin_cobyla(
             func=objective,
@@ -512,8 +532,10 @@ def run_vqa_qiskit(
     except _Plateau:
         xopt = _best_theta[0]
         _dbg.debug("COBYLA stopped early via plateau detection at nfev=%d", len(convergence_trace))
+    t_opt = time.perf_counter() - t_opt_start
 
     # Final 5000-shot sample
+    t_final_start = time.perf_counter()
     final_qc = qc.assign_parameters(dict(zip(params, xopt)))
     job = sampler.run([final_qc], shots=5000)
     counts = job.result()[0].data.meas.get_counts()
@@ -537,6 +559,12 @@ def run_vqa_qiskit(
         candidates.append((u_bits, s_bits, cost))
         if len(candidates) >= n_candidates:
             break
+
+    if phase_times is not None:
+        device_label = "GPU" if (_AER_AVAILABLE and use_gpu) else "CPU"
+        phase_times[f"Statevector sampling ({device_label})"] = _t_sampling[0]
+        phase_times["COBYLA + proxy eval (CPU)"] = max(0.0, t_opt - _t_sampling[0])
+        phase_times["Final 5000-shot extraction"] = time.perf_counter() - t_final_start
 
     return candidates, convergence_trace
 
@@ -680,6 +708,7 @@ def run_quantum_siting(
     warm_start: str = "zeros",
     track_convergence: bool = False,
     _num_reads: int | None = None,
+    device: str = "auto",
 ):
     """Full hybrid quantum-classical siting pipeline.
 
@@ -694,6 +723,7 @@ def run_quantum_siting(
     second_stage     : "ed" | "uc"
     warm_start       : "zeros" | "random" | "sdp" (Qiskit path only)
     track_convergence: record COBYLA objective per iteration (Qiskit path only)
+    device           : "auto" | "GPU" | "CPU" statevector device (Qiskit path only)
 
     Returns
     -------
@@ -708,7 +738,10 @@ def run_quantum_siting(
     G = len(generators)
     B = len(batteries)
 
+    runtime_phases: dict[str, float] = {}
+
     # Compute congestion signal from no-battery DC-OPF shadow prices
+    t_setup_start = time.perf_counter()
     ptdf = np.array(grid.PTDF)
     shadow_prices = _compute_shadow_prices(grid, generators, T)
     p_bat = batteries[0]["power_mw"]
@@ -722,6 +755,7 @@ def run_quantum_siting(
         generators, batteries, n_buses, demand_ref, T,
         congestion_signal=congestion_signal,
     )
+    runtime_phases["Setup (shadow-price OPF + proxy)"] = time.perf_counter() - t_setup_start
 
     # ── Quantum sieve ────────────────────────────────────────────────────────
     t_q_start = time.perf_counter()
@@ -746,6 +780,8 @@ def run_quantum_siting(
             warm_start=warm_start,
             track_convergence=track_convergence,
             _sdp_ingredients=_sdp_ingredients,
+            phase_times=runtime_phases,
+            device=device,
         )
 
         # Post-filter to exactly B batteries placed (P_budget == 0)
@@ -769,6 +805,7 @@ def run_quantum_siting(
             n_candidates=n_candidates,
             num_reads=_num_reads,
         )
+        runtime_phases["D-Wave SA sampling"] = time.perf_counter() - t_q_start
 
     runtime_quantum = time.perf_counter() - t_q_start
 
@@ -788,6 +825,8 @@ def run_quantum_siting(
     )
 
     runtime_classical = time.perf_counter() - t_c_start
+    stage_label = "ED" if second_stage == "ed" else "UC"
+    runtime_phases[f"Classical {stage_label} refinement"] = runtime_classical
 
     if not evaluated:
         raise RuntimeError("No feasible candidates found after classical refinement.")
@@ -805,4 +844,5 @@ def run_quantum_siting(
         runtime_classical=runtime_classical,
         warm_start=warm_start if backend == "qiskit" else "zeros",
         convergence_trace=convergence_trace if track_convergence else None,
+        runtime_phases=runtime_phases,
     )

@@ -100,6 +100,48 @@ def _draw_labels(Gg, pos_g, ax, labels, font_size=8):
 # Core drawing helpers
 # ---------------------------------------------------------------------------
 
+def _grid_load_buses(grid):
+    """Buses (1-indexed) with nonzero demand at any hour, or None if unknown."""
+    if grid is None:
+        return None
+    import numpy as np
+    demand = np.array(grid.power_demand)
+    return {i + 1 for i in range(demand.shape[0]) if demand[i].sum() > 0}
+
+
+def _draw_split_nodes(ax, pos_g, node_roles, node_sizes, dc_bus=None):
+    """Draw nodes whose colour shows every role at that bus.
+
+    node_roles: {node: [colour, ...]} — one colour is a plain circle, two is a
+    left/right half split, three a pie split. node_sizes uses the same point²
+    scale as networkx so existing size logic carries over. The datacenter bus
+    gets a red ring.
+    """
+    from matplotlib.patches import Circle, Wedge
+
+    xs = [p[0] for p in pos_g.values()]
+    ys = [p[1] for p in pos_g.values()]
+    span = max(max(xs) - min(xs), max(ys) - min(ys)) or 2.0
+    ax.set_aspect("equal")
+    base_r = span * 0.038
+
+    for n, colors in node_roles.items():
+        x, y = pos_g[n]
+        r = base_r * (node_sizes.get(n, 600) / 600.0) ** 0.5
+        if len(colors) == 1:
+            ax.add_patch(Circle((x, y), r, facecolor=colors[0],
+                                edgecolor="none", zorder=2))
+        else:
+            arc = 360.0 / len(colors)
+            for i, c in enumerate(colors):
+                ax.add_patch(Wedge((x, y), r, 90 + i * arc, 90 + (i + 1) * arc,
+                                   facecolor=c, edgecolor="white",
+                                   linewidth=0.6, zorder=2))
+        if dc_bus is not None and n == dc_bus:
+            ax.add_patch(Circle((x, y), r * 1.18, fill=False, edgecolor="red",
+                                linewidth=2.5, zorder=3))
+
+
 def draw_network(Gg, pos_g, ax, gen_buses_set=None):
     if gen_buses_set is None:
         gen_buses_set = gen_buses
@@ -129,7 +171,7 @@ def _node_edge_colors(nodes, dc_bus):
 
 
 def draw_ed_result(result, gen_locations: dict, bat_locations: dict, ax,
-                   _topo=None, dc_bus=None, dc_mw=0.0):
+                   _topo=None, dc_bus=None, dc_mw=0.0, load_buses=None):
     if _topo is None:
         Gg, pos_g, branches_list = G, pos, branches
     else:
@@ -142,24 +184,21 @@ def draw_ed_result(result, gen_locations: dict, bat_locations: dict, ax,
 
     gen_bus_set = set(gen_locations.values())
     bat_bus_set = set(bat_locations.values())
-    node_colors, node_sizes = [], []
+    node_roles, node_sizes = {}, {}
     for n in Gg.nodes:
+        colors, size = [], 600
         if n in gen_bus_set:
             gen_idx = [g for g, b in gen_locations.items() if b == n][0]
-            node_sizes.append(400 + result.dispatch[gen_idx, -1] * 0.5)
-            node_colors.append(gen_node_color)
-        elif n in bat_bus_set:
-            node_sizes.append(700)
-            node_colors.append("#2ca02c")
-        else:
-            node_sizes.append(600)
-            node_colors.append(load_node_color)
+            colors.append(gen_node_color)
+            size = 400 + result.dispatch[gen_idx, -1] * 0.5
+        if n in bat_bus_set:
+            colors.append("#2ca02c")
+            size = max(size, 700)
+        if (load_buses is not None and n in load_buses) or not colors:
+            colors.append(load_node_color)
+        node_roles[n], node_sizes[n] = colors, size
 
-    nodelist = list(Gg.nodes)
-    nx.draw_networkx_nodes(Gg, pos_g, ax=ax, nodelist=nodelist,
-                           node_color=node_colors, node_size=node_sizes,
-                           edgecolors=_node_edge_colors(nodelist, dc_bus),
-                           linewidths=3.0)
+    _draw_split_nodes(ax, pos_g, node_roles, node_sizes, dc_bus=dc_bus)
 
     # Bus number inside node (white), status info offset above
     node_labels = {n: str(n) for n in Gg.nodes}
@@ -191,7 +230,7 @@ def draw_ed_result(result, gen_locations: dict, bat_locations: dict, ax,
 
 
 def draw_uc_result(result, gen_locations: dict, bat_locations: dict, ax,
-                   _topo=None, dc_bus=None, dc_mw=0.0):
+                   _topo=None, dc_bus=None, dc_mw=0.0, load_buses=None):
     if _topo is None:
         Gg, pos_g, branches_list = G, pos, branches
     else:
@@ -204,29 +243,26 @@ def draw_uc_result(result, gen_locations: dict, bat_locations: dict, ax,
 
     gen_bus_set = set(gen_locations.values())
     bat_bus_set = set(bat_locations.values())
-    node_colors, node_sizes = [], []
+    node_roles, node_sizes = {}, {}
     for n in Gg.nodes:
+        colors, size = [], 600
         if n in gen_bus_set:
             gen_idx = [g for g, b in gen_locations.items() if b == n][0]
             committed = result.commitment[gen_idx, -1]
             if committed == 1:
-                node_sizes.append(400 + result.dispatch[gen_idx, -1] * 0.5)
-                node_colors.append(gen_node_color)
+                colors.append(gen_node_color)
+                size = 400 + result.dispatch[gen_idx, -1] * 0.5
             else:
-                node_sizes.append(500)
-                node_colors.append("#aaaaaa")
-        elif n in bat_bus_set:
-            node_sizes.append(700)
-            node_colors.append("#2ca02c")
-        else:
-            node_sizes.append(600)
-            node_colors.append(load_node_color)
+                colors.append("#aaaaaa")
+                size = 500
+        if n in bat_bus_set:
+            colors.append("#2ca02c")
+            size = max(size, 700)
+        if (load_buses is not None and n in load_buses) or not colors:
+            colors.append(load_node_color)
+        node_roles[n], node_sizes[n] = colors, size
 
-    nodelist = list(Gg.nodes)
-    nx.draw_networkx_nodes(Gg, pos_g, ax=ax, nodelist=nodelist,
-                           node_color=node_colors, node_size=node_sizes,
-                           edgecolors=_node_edge_colors(nodelist, dc_bus),
-                           linewidths=3.0)
+    _draw_split_nodes(ax, pos_g, node_roles, node_sizes, dc_bus=dc_bus)
 
     # Bus number inside node (white), status info offset above
     node_labels = {n: str(n) for n in Gg.nodes}
@@ -337,24 +373,26 @@ def draw_siting_panel(uc_result, gen_locations, bat_locs, grid, ax, title, subti
                                  font_size=7, font_color="black",
                                  bbox=dict(fc="white", ec="none", alpha=0.8))
 
+    load_buses = _grid_load_buses(grid)
     gen_bus_set = set(gen_locations.values())
     bat_bus_set = set(bat_locs.values())
-    node_colors, node_sizes = [], []
+    node_roles, node_sizes = {}, {}
     for n in Gg.nodes:
+        colors, size = [], 500
         if n in gen_bus_set:
             g_idx = [g for g, b in gen_locations.items() if b == n][0]
             committed = uc_result.commitment[g_idx, -1]
-            node_colors.append(gen_node_color if committed > 0.5 else "#aaaaaa")
+            colors.append(gen_node_color if committed > 0.5 else "#aaaaaa")
             output = uc_result.dispatch[g_idx, -1]
-            node_sizes.append(400 + output * 0.5 if committed > 0.5 else 300)
-        elif n in bat_bus_set:
-            node_colors.append("#2ca02c")
-            node_sizes.append(700)
-        else:
-            node_colors.append(load_node_color)
-            node_sizes.append(500)
+            size = 400 + output * 0.5 if committed > 0.5 else 300
+        if n in bat_bus_set:
+            colors.append("#2ca02c")
+            size = max(size, 700)
+        if (load_buses is not None and n in load_buses) or not colors:
+            colors.append(load_node_color)
+        node_roles[n], node_sizes[n] = colors, size
 
-    nx.draw_networkx_nodes(Gg, pos_g, ax=ax, node_color=node_colors, node_size=node_sizes)
+    _draw_split_nodes(ax, pos_g, node_roles, node_sizes)
 
     for bus in bat_bus_set:
         ax.scatter(*pos_g[bus], marker="*", s=500, color="white", zorder=5)
@@ -595,6 +633,58 @@ def save_demand_plot(grid, out_dir=None):
     return filename
 
 
+def save_runtime_breakdown(runtime_phases: dict, opt_name: str, T: int,
+                           assets_file: str, out_dir=None, tag: str = ""):
+    """Stacked bar chart of per-phase wall time.
+
+    runtime_phases: ordered {phase_label: seconds}. Total bar height = wall time.
+    tag: optional run variant (e.g. backend "Qiskit (CPU)") — shown in the title
+    and appended to the filename so variants don't overwrite each other.
+    Returns the saved filename.
+    """
+    if out_dir is None:
+        out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+    os.makedirs(out_dir, exist_ok=True)
+
+    phases = [(label, max(0.0, float(sec))) for label, sec in runtime_phases.items()]
+    total = sum(sec for _, sec in phases)
+
+    phase_colors = ["#5b8dd9", "#e05c3a", "#2ca02c", "#9467bd", "#ff7f0e",
+                    "#8c564b", "#17becf", "#bcbd22"]
+
+    fig, ax = plt.subplots(figsize=(3.4, 7))
+    bottom = 0.0
+    for i, (label, sec) in enumerate(phases):
+        pct = 100.0 * sec / total if total > 0 else 0.0
+        ax.bar([0], [sec], bottom=[bottom], width=0.5,
+               color=phase_colors[i % len(phase_colors)],
+               label=f"{label} — {sec:.1f}s ({pct:.0f}%)")
+        bottom += sec
+
+    ax.set_xlim(-0.5, 0.5)
+    ax.set_xticks([])
+    ax.set_ylabel("Wall time (s)", fontsize=10)
+    title_tag = f" | {tag}" if tag else ""
+    ax.set_title(f"Runtime Breakdown — {opt_name}{title_tag}\n"
+                 f"T={T}h | {assets_file} | total {total:.1f}s",
+                 fontsize=10, pad=10)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.03), fontsize=8,
+              framealpha=0.9, ncol=1)
+    ax.grid(axis="y", linestyle="--", alpha=0.35)
+
+    file_tag = "_" + "".join(c if c.isalnum() else "_" for c in tag.lower()) if tag else ""
+    filename = os.path.join(
+        out_dir,
+        f"runtime_breakdown_{opt_name.lower().replace(' ', '_')}"
+        f"{file_tag}_{T}h_{assets_file.replace('.py', '')}.png",
+    )
+    plt.tight_layout()
+    plt.savefig(filename, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Plot saved: {filename}")
+    return filename
+
+
 def save_plot(result, opt_name: str, T: int, assets_file: str, grid=None,
               generators=None, bat_locs=None, dc_bus=None, dc_mw=0.0):
     out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
@@ -622,11 +712,11 @@ def save_plot(result, opt_name: str, T: int, assets_file: str, grid=None,
     elif hasattr(result, "commitment"):
         fig, ax = plt.subplots(figsize=(10, 8))
         draw_uc_result(result, gen_locations, bat_locations, ax, _topo=_topo,
-                       dc_bus=dc_bus, dc_mw=dc_mw)
+                       dc_bus=dc_bus, dc_mw=dc_mw, load_buses=_grid_load_buses(grid))
     else:
         fig, ax = plt.subplots(figsize=(10, 8))
         draw_ed_result(result, gen_locations, bat_locations, ax, _topo=_topo,
-                       dc_bus=dc_bus, dc_mw=dc_mw)
+                       dc_bus=dc_bus, dc_mw=dc_mw, load_buses=_grid_load_buses(grid))
 
     filename = os.path.join(
         out_dir, f"{opt_name.lower()}_{T}h_{assets_file.replace('.py', '')}.png"

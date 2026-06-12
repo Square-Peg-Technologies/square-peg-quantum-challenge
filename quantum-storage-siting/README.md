@@ -194,6 +194,10 @@ Use assets_dc_bus4.py or assets_dc_bus5.py for non-trivial output.
 
 ## Running the Tool
 
+Two ways to run: the interactive CLI (below) or the browser dashboard
+(see "Dashboard (Browser UI)" — recommended for repeated experiments since
+it caches results and keeps run history).
+
 Always use the venv Python:
 
     source .venv/bin/activate
@@ -212,7 +216,7 @@ Step 1 — optimization:
     3. Battery Siting (exhaustive search)
     4. Quantum Siting (Hybrid VQA + Classical)
 
-For option 4 only, three additional sub-prompts:
+For option 4 only, additional sub-prompts:
 
     Select quantum backend:
       1. Qiskit (VQA, local simulator)
@@ -223,6 +227,11 @@ For option 4 only, three additional sub-prompts:
     Second-stage solver:
       1. ED dispatch (fix commitment and placement)
       2. Full UC re-solve (fix placement only)
+
+    Warm-start strategy (Qiskit backend only):
+      1. zeros  — theta=0, paper simulation default [default]
+      2. random — theta~Uniform[-2pi,2pi], paper IonQ hardware default
+      3. sdp    — LP-relaxation warm start, paper Section III
 
 Step 2 — hours (1-24):
 
@@ -269,6 +278,82 @@ Use assets_dc_bus4.py or assets_dc_bus5.py to get a non-trivial P_loc signal.
     --------------------------------------------
     1      (2, 4, 6, 7)                 199,804
     ...
+
+
+## Dashboard (Browser UI)
+
+A Gradio web dashboard wraps the same solvers as main.py for browser-based runs —
+no terminal interaction needed once it is launched.
+
+Launch:
+
+    .venv/bin/python dashboard.py
+
+then open http://127.0.0.1:7860. Stop the server with Ctrl-C. Note the server
+does not hot-reload: after pulling code changes, restart it.
+
+### Layout
+
+One tab per problem, each with a compact control bar of inputs on top and
+results below in sub-tabs:
+
+    Economic Dispatch     use case, assets, hours T
+    Unit Commitment       use case, assets, hours T
+    Battery Siting (MIP)  + time limit (s)
+    Quantum Siting        + backend, candidates, 2nd stage, warm start
+    Power Flow            per-candidate network diagrams (read-only gallery)
+
+Sub-tabs per problem: Results (quantum only — candidate ranking table),
+Plots (all of the run's plots side by side, scaled to fit the window),
+Runtime (quantum only — phase breakdown chart), and Terminal — the exact
+CLI output including full tracebacks, with a copy button for easy debugging.
+
+The quantum backend dropdown has separate Qiskit (GPU) and Qiskit (CPU) items
+so the control always shows which device you are using. Selecting GPU on a
+machine without one shows a dismissible error popup and nothing runs; any
+mid-run failure pops a warning toast and the traceback lands in the Terminal
+sub-tab.
+
+### Result caching — runs are never repeated by accident
+
+Every run is recorded with its exact input settings. Clicking Run with settings
+that were already run loads the stored results instantly (summary banner says
+"✅ Already run — loaded from <timestamp>") instead of re-solving. Tick the
+"Re-run even if cached" checkbox next to the Run button to force a fresh solve.
+On page load each tab is pre-seeded with the cached results for your last-used
+settings.
+
+Plots are snapshotted into a per-run folder at record time, so cached runs keep
+showing the correct images even after later runs overwrite the shared filenames
+in outputs/.
+
+### Run history
+
+A history strip at the bottom of every problem tab lists all past runs (any
+problem, newest first). Clicking a row reloads that run's plots and terminal
+log into a viewer below the table. History survives restarts.
+
+### Power Flow tab
+
+After a Quantum Siting run, this tab shows one network diagram per evaluated
+candidate placement, ranked by true cost — committed/off generators, battery
+buses, and per-line max loading (orange ≥70%, red ≥90%). The gallery reflects
+the latest quantum run; "Reload from disk" restores it after a server restart.
+
+### Comparing classical vs quantum
+
+Battery Siting (MIP) and Quantum Siting solve the same problem, and the quantum
+tab generates the same grid + dispatch-overview plots for its best placement
+(saved as quantum_*.png vs siting_*.png so neither overwrites the other). The
+quantum Runtime chart is tagged with the backend, so Qiskit (GPU) vs (CPU)
+timing comparisons keep separate charts.
+
+### Files written by the dashboard
+
+    outputs/dashboard_settings.json   last-used inputs per tab (restored on launch)
+    outputs/dashboard_history.json    run history index (cache keys, summaries)
+    outputs/dashboard_runs/           per-run terminal logs + plot snapshots
+    outputs/powerflow/                latest quantum run's candidate diagrams
 
 
 ## Quantum Siting — How It Works
@@ -348,34 +433,65 @@ Debug log: every run writes outputs/quantum_siting_debug.log with all candidate
 pass/fail outcomes and error messages for post-run diagnosis.
 
 
-## GPU Acceleration
+## CPU vs GPU Support
 
-The Qiskit VQA path auto-detects GPU at import:
+The Qiskit VQA statevector simulation runs on either CPU or GPU. Everything
+else (ED, UC, Siting MIP, D-Wave SA, the dashboard) is CPU-only and unaffected
+by this choice.
+
+### CPU-only install (default)
+
+    .venv/bin/pip install -r requirements.txt
+
+Installs qiskit-aer (CPU statevector). Works on any machine, no CUDA needed.
+The VQA runs correctly but slower — expect several times the GPU wall time on
+ieee14-sized problems.
+
+### GPU install (NVIDIA + CUDA 12)
+
+    .venv/bin/pip install -r requirements.txt
+    .venv/bin/pip install -r requirements-gpu.txt
+
+requirements-gpu.txt installs qiskit-aer-gpu plus the cuQuantum/CUDA wheels.
+qiskit-aer-gpu replaces the CPU qiskit-aer in place (same import name), so
+install it second. Requires an NVIDIA GPU with CUDA 12.
+
+Note: qiskit-aer-gpu 0.15.x is the latest GPU build and requires Qiskit <2.0
+(requirements.txt pins qiskit<2.0 for this reason — see Todo FT-5 for the
+Qiskit 2.x upgrade path). The CPU-only qiskit-aer 0.17.x supports Qiskit 2.x
+but has no GPU equivalent yet.
+
+### Selecting the device at runtime
+
+CLI (main.py): auto-detects — uses GPU when qiskit-aer-gpu and a GPU are
+present, otherwise CPU:
 
     Aer: GPU detected — using GPU statevector      (qiskit-aer-gpu + CUDA)
     Aer: no GPU — using CPU statevector            (qiskit-aer, CPU only)
     Aer: not installed — using Qiskit StatevectorSampler  (fallback)
 
+Dashboard: the backend dropdown has explicit Qiskit (GPU) and Qiskit (CPU)
+entries, so you always know which device is in use. Picking CPU forces CPU
+even on a GPU machine (useful for timing comparisons — the runtime breakdown
+chart is tagged with the backend so GPU and CPU charts coexist). Picking GPU
+on a machine without one shows an error popup and nothing runs.
+
+Programmatic: run_quantum_siting(..., device="auto" | "GPU" | "CPU").
+
 At 19 qubits (ieee14): 2¹⁹ × 4 bytes = 2 MB statevector — trivial for any
 modern GPU. RTX 3080 Ti (16 GB VRAM) runs the full VQA in ~2.5 minutes.
 
-Install GPU version (requires Qiskit 1.x and CUDA 12):
-
-    .venv/bin/pip install qiskit-aer-gpu==0.15.1
-
-Note: qiskit-aer-gpu 0.15.x is the latest GPU build and requires Qiskit <2.0.
-requirements.txt is pinned to qiskit<2.0. The CPU-only qiskit-aer 0.17.x
-supports Qiskit 2.x but has no GPU equivalent yet.
-
-Always source the venv before running to ensure the GPU-enabled Qiskit is used
-rather than any system-level installation.
+Always source the venv before running to ensure the venv's Qiskit build is
+used rather than any system-level installation.
 
 
 ## File Structure
 
     main.py                 Entry point. Interactive CLI, dispatches to solvers.
-    plots.py                Network visualization (outputs PNG per run).
-    requirements.txt        Python dependencies.
+    dashboard.py            Gradio browser dashboard (see "Dashboard (Browser UI)").
+    plots.py                Network visualization + runtime breakdown charts (PNG per run).
+    requirements.txt        Python dependencies, CPU-only (includes gradio for the dashboard).
+    requirements-gpu.txt    Optional GPU extras: qiskit-aer-gpu + cuQuantum/CUDA wheels.
 
     use_cases/
         pjm5/
@@ -448,7 +564,7 @@ Python 3.11.12 pinned via pyenv:
     pyenv local 3.11.12
     /home/<user>/.pyenv/versions/3.11.12/bin/python -m venv .venv
     .venv/bin/pip install -r requirements.txt
-    .venv/bin/pip install qiskit-aer-gpu==0.15.1   # GPU only, requires CUDA 12
+    .venv/bin/pip install -r requirements-gpu.txt  # GPU only, requires CUDA 12
 
 Always activate the venv or use .venv/bin/python explicitly — never system python.
 

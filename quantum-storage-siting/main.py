@@ -72,11 +72,8 @@ def prompt_use_case() -> tuple[str, str]:
         print("Invalid selection. Please enter a number from the list.")
 
 
-def load_use_case(use_case_name: str, use_case_path: str) -> tuple:
-    """Load grid module, assets module, and locations module from a use case folder.
-
-    If multiple assets*.py files exist the user is prompted to pick one;
-    if only one exists it is loaded automatically.
+def load_modules(use_case_name: str, use_case_path: str, assets_path: str) -> tuple:
+    """Non-interactive module loader shared by the CLI and the dashboard.
 
     Returns (assets_file_name, grid_mod, assets_mod, loc_mod).
     """
@@ -94,7 +91,26 @@ def load_use_case(use_case_name: str, use_case_path: str) -> tuple:
     loc_mod = importlib.util.module_from_spec(loc_spec)
     loc_spec.loader.exec_module(loc_mod)  # type: ignore[union-attr]
 
-    # Assets — auto-select if only one, otherwise prompt
+    # Add use_case_path to sys.path so assets_dc_bus{N}.py can do "from assets import ..."
+    if use_case_path not in sys.path:
+        sys.path.insert(0, use_case_path)
+
+    assets_spec = importlib.util.spec_from_file_location("assets_chosen", assets_path)
+    assert assets_spec is not None and assets_spec.loader is not None
+    assets_mod = importlib.util.module_from_spec(assets_spec)
+    assets_spec.loader.exec_module(assets_mod)  # type: ignore[union-attr]
+
+    return os.path.basename(assets_path), grid_mod, assets_mod, loc_mod
+
+
+def load_use_case(use_case_name: str, use_case_path: str) -> tuple:
+    """Load grid module, assets module, and locations module from a use case folder.
+
+    If multiple assets*.py files exist the user is prompted to pick one;
+    if only one exists it is loaded automatically.
+
+    Returns (assets_file_name, grid_mod, assets_mod, loc_mod).
+    """
     found = sorted(glob.glob(os.path.join(use_case_path, "assets*.py")))
     if not found:
         print(f"No assets files found in {use_case_path}.")
@@ -118,16 +134,7 @@ def load_use_case(use_case_name: str, use_case_path: str) -> tuple:
                 break
             print("Invalid selection. Please enter a number from the list.")
 
-    # Add use_case_path to sys.path so assets_dc_bus{N}.py can do "from assets import ..."
-    if use_case_path not in sys.path:
-        sys.path.insert(0, use_case_path)
-
-    assets_spec = importlib.util.spec_from_file_location("assets_chosen", chosen)
-    assert assets_spec is not None and assets_spec.loader is not None
-    assets_mod = importlib.util.module_from_spec(assets_spec)
-    assets_spec.loader.exec_module(assets_mod)  # type: ignore[union-attr]
-
-    return os.path.basename(chosen), grid_mod, assets_mod, loc_mod
+    return load_modules(use_case_name, use_case_path, chosen)
 
 
 def print_header(
@@ -244,6 +251,12 @@ def print_quantum_results(result: "QuantumSitingResult") -> None:
     print(f"Candidates evaluated:       {len(result.evaluated)}")
     print(f"Runtime — quantum sieve:    {result.runtime_quantum:.1f}s")
     print(f"Runtime — classical stage:  {result.runtime_classical:.1f}s")
+    if result.runtime_phases:
+        total = sum(result.runtime_phases.values())
+        print("Runtime breakdown by phase:")
+        for label, sec in result.runtime_phases.items():
+            pct = 100.0 * sec / total if total > 0 else 0.0
+            print(f"  {label:<36} {sec:>8.1f}s  ({pct:>4.1f}%)")
     if result.convergence_trace:
         print(f"COBYLA iterations:         {len(result.convergence_trace)}  (final obj: {result.convergence_trace[-1]:.4g})")
 
@@ -301,9 +314,18 @@ def print_results(
         return
 
     if isinstance(result, SitingMIPResult):
-        label = "Best placement found (time limit hit)" if result.scip_status == "timelimit" else "Optimal battery placement"
+        label = {
+            "timelimit": "Best placement found (time limit hit)",
+            "stalled": "Best placement found (stopped early — no improvement)",
+        }.get(result.scip_status, "Optimal battery placement")
         print(f"\n{label}: buses {result.bus_tuple}")
         print(f"Total cost: ${result.total_cost:,.0f}")
+        if result.runtime_phases:
+            total = sum(result.runtime_phases.values())
+            print("Runtime breakdown by phase:")
+            for phase_label, sec in result.runtime_phases.items():
+                pct = 100.0 * sec / total if total > 0 else 0.0
+                print(f"  {phase_label:<42} {sec:>8.1f}s  ({pct:>4.1f}%)")
         result = result.uc_result   # fall through to UC display below
 
     if isinstance(result, SitingResult):
@@ -501,6 +523,13 @@ def main():
     elif isinstance(plot_result, SitingResult):
         save_plot(plot_result, opt_name, T, assets_file_name, grid=grid,
                   generators=generators, dc_bus=dc_bus, dc_mw=dc_mw)
+
+    if isinstance(result, (QuantumSitingResult, SitingMIPResult)) and result.runtime_phases:
+        try:
+            from plots import save_runtime_breakdown
+            save_runtime_breakdown(result.runtime_phases, opt_name, T, assets_file_name)
+        except Exception as e:
+            print(f"Runtime breakdown plot failed: {e}")
 
 
 if __name__ == "__main__":
