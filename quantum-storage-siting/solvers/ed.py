@@ -128,13 +128,36 @@ def run_ed(grid, generators, batteries, gen_locs, bat_locs, T):
     # ------------------------------------------------------------------
     # Solve
     # ------------------------------------------------------------------
+    # Tiny battery throughput penalty: charge/discharge is otherwise free in
+    # the objective, leaving a degenerate flat optimum — interior-point
+    # solvers then return small simultaneous charge+discharge, and HiGHS's QP
+    # path can fail to terminate on the flat face. 1e-4 $/MW is far below any
+    # real cost and does not affect reported costs (computed from dispatch).
+    objective_terms.append(1e-4 * (cp.sum(r_plus) + cp.sum(r_minus)))
     objective = cp.Minimize(cp.sum(objective_terms))
     prob = cp.Problem(objective, constraints)
 
-    try:
-        prob.solve(solver="HIGHS", verbose=False)
-    except cp.error.SolverError:
-        prob.solve(solver="SCIP", verbose=False)
+    # Clarabel first: HiGHS's QP path can spin forever at 100% CPU on this
+    # problem class (battery charge/discharge carries no objective cost, so
+    # some placements leave a degenerate flat optimal face). Clarabel's
+    # interior-point method terminates reliably. HiGHS stays as a fallback
+    # with a hard time limit so a hang can never block the pipeline again.
+    # Tight Clarabel tolerances: its interior-point solutions otherwise carry
+    # ~1e-3 MW fuzz on the battery variables (charge and discharge both
+    # slightly positive), which downstream checks read as simultaneous
+    # charge/discharge.
+    for solver_name, solver_opts in (
+        ("CLARABEL", {"tol_gap_abs": 1e-10, "tol_gap_rel": 1e-10,
+                      "tol_feas": 1e-10}),
+        ("HIGHS", {"time_limit": 30.0}),
+        ("SCIP", {}),
+    ):
+        try:
+            prob.solve(solver=solver_name, verbose=False, **solver_opts)
+        except cp.error.SolverError:
+            continue
+        if prob.status in ("optimal", "optimal_inaccurate"):
+            break
 
     if prob.status not in ("optimal", "optimal_inaccurate"):
         raise RuntimeError(

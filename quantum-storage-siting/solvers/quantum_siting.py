@@ -94,7 +94,12 @@ def _compute_shadow_prices(grid, generators: list[dict], T: int) -> np.ndarray:
             obj_terms.append(a * cp.sum_squares(p[g, t]) + b * p[g, t] + c)
 
     prob = cp.Problem(cp.Minimize(cp.sum(obj_terms)), constraints)
-    prob.solve(solver="HIGHS", verbose=False)
+    # Clarabel first — HiGHS's QP path can hang on degenerate cases (see ed.py);
+    # the time limit on the fallback guarantees this setup phase never blocks.
+    try:
+        prob.solve(solver="CLARABEL", verbose=False)
+    except cp.error.SolverError:
+        prob.solve(solver="HIGHS", verbose=False, time_limit=30.0)
 
     if prob.status not in ("optimal", "optimal_inaccurate"):
         _dbg.warning("No-battery OPF status=%s — congestion signal zeroed", prob.status)
@@ -660,7 +665,12 @@ def evaluate_candidates(
     Returns list of (bat_locs, commitment, true_cost, result_obj).
     Candidates are evaluated in parallel using all available CPU cores.
     second_stage: "ed" | "uc"
+
+    Workers use the "spawn" start method: the parent holds an active CUDA
+    context after GPU statevector sampling, and fork()ing a CUDA-active
+    process intermittently deadlocks the child (fork is unsafe with CUDA).
     """
+    import multiprocessing
     from concurrent.futures import ProcessPoolExecutor
     from solvers.siting_benders import _GridData
 
@@ -683,7 +693,8 @@ def evaluate_candidates(
 
     n_workers = min(len(work_items), os.cpu_count() or 1)
     results = []
-    with ProcessPoolExecutor(max_workers=n_workers) as pool:
+    with ProcessPoolExecutor(max_workers=n_workers,
+                             mp_context=multiprocessing.get_context("spawn")) as pool:
         for outcome in pool.map(_eval_one, work_items):
             if outcome is not None:
                 bat_locs, commitment, true_cost, result_obj = outcome
