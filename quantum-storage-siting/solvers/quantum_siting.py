@@ -35,11 +35,16 @@ if not _dbg.handlers:
 try:
     from qiskit_aer.primitives import SamplerV2 as _AerSamplerV2
     from qiskit_aer import AerSimulator as _AerSimulator
+    from qiskit.primitives import BackendSamplerV2 as _BackendSamplerV2
     _AER_AVAILABLE = True
-    _GPU_AVAILABLE = "GPU" in _AerSimulator().available_devices()
+    _aer_sim = _AerSimulator()
+    _GPU_AVAILABLE = "GPU" in _aer_sim.available_devices()
+    _AER_TN_AVAILABLE = "matrix_product_state" in _aer_sim.available_methods()
+    del _aer_sim
 except Exception:
     _AER_AVAILABLE = False
     _GPU_AVAILABLE = False
+    _AER_TN_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +397,40 @@ def build_butterfly_ansatz(n_qubits: int, n_layers: int):
     return qc, list(gamma) + list(beta)
 
 
+def build_linear_chain_ansatz(n_qubits: int, n_layers: int):
+    """1D brick-wall HEA for MPS/TN-compatible simulation.
+
+    Each layer: RY on every qubit, then nearest-neighbor RZX in alternating
+    even/odd brick-wall pattern.  Only adjacent two-qubit gates — MPS bond
+    dimension stays tractable regardless of qubit count.
+
+    Returns (qc, params) where params = gamma_list + beta_list.
+    """
+    from qiskit import QuantumCircuit
+    from qiskit.circuit import ParameterVector
+
+    n_even = n_qubits // 2          # even pairs: (0,1),(2,3),...
+    n_odd  = (n_qubits - 1) // 2   # odd  pairs: (1,2),(3,4),...
+    # Count RZX params exactly: alternating even/odd per layer
+    n_rzx = sum(n_even if l % 2 == 0 else n_odd for l in range(n_layers))
+
+    gamma = ParameterVector("γ", n_rzx)
+    beta  = ParameterVector("β", n_layers * n_qubits)
+    qc    = QuantumCircuit(n_qubits)
+
+    g_idx = 0
+    for layer in range(n_layers):
+        for q in range(n_qubits):
+            qc.ry(beta[layer * n_qubits + q], q)
+        pairs = range(0, n_qubits - 1, 2) if layer % 2 == 0 else range(1, n_qubits - 1, 2)
+        for q in pairs:
+            qc.rzx(gamma[g_idx], q, q + 1)
+            g_idx += 1
+
+    qc.measure_all()
+    return qc, list(gamma) + list(beta)
+
+
 def run_vqa_qiskit(
     n_qubits_gen: int,
     n_qubits_bat: int,
@@ -403,6 +442,9 @@ def run_vqa_qiskit(
     _sdp_ingredients: dict | None = None,
     phase_times: dict | None = None,
     device: str = "auto",
+    sim_method: str = "statevector",
+    max_time_s: float | None = None,
+    ansatz: str = "auto",
 ) -> tuple[list[tuple], list[float]]:
     """Run COBYLA VQA and return (candidates, convergence_trace).
 
@@ -425,10 +467,33 @@ def run_vqa_qiskit(
     from scipy.optimize import fmin_cobyla
 
     n_qubits = n_qubits_gen + n_qubits_bat
-    n_half = n_layers * n_qubits   # γ block size = β block size
 
-    qc, params = build_butterfly_ansatz(n_qubits, n_layers)
+    # ansatz selection: "auto" picks linear-chain for TN, butterfly otherwise.
+    _use_linear = (ansatz == "linear_chain") or (ansatz == "auto" and sim_method == "tensor_network")
+    if _use_linear:
+        # Linear-chain HEA: MPS-compatible, nearest-neighbor gates only.
+        # Use more layers than butterfly to compensate for reduced connectivity.
+        _tn_layers = n_layers if n_layers != 3 else 2
+        qc, params = build_linear_chain_ansatz(n_qubits, _tn_layers)
+        n_layers = _tn_layers
+        _ansatz_label = "linear-chain HEA"
+    else:
+        qc, params = build_butterfly_ansatz(n_qubits, n_layers)
+        _ansatz_label = "butterfly ansatz"
 
+    # n_gamma: size of γ (RZX) block — used for warm-start β indexing
+    n_beta  = n_layers * n_qubits
+    n_gamma = len(params) - n_beta
+
+    _sim_display = "MPS (matrix_product_state)" if sim_method == "tensor_network" else sim_method
+
+    if sim_method not in ("statevector", "tensor_network"):
+        raise ValueError(f"Unknown sim_method: {sim_method!r} (use 'statevector' or 'tensor_network')")
+    if sim_method == "tensor_network" and not (_AER_AVAILABLE and _AER_TN_AVAILABLE):
+        raise RuntimeError(
+            "sim_method='tensor_network' requested but not available — "
+            "install qiskit-aer with matrix_product_state support."
+        )
     if device not in ("auto", "GPU", "CPU"):
         raise ValueError(f"Unknown device: {device!r} (use 'auto', 'GPU', or 'CPU')")
     if device == "GPU" and not (_AER_AVAILABLE and _GPU_AVAILABLE):
@@ -439,16 +504,32 @@ def run_vqa_qiskit(
     use_gpu = _GPU_AVAILABLE if device == "auto" else device == "GPU"
 
     if _AER_AVAILABLE:
-        sampler = _AerSamplerV2()
-        if use_gpu:
-            sampler.options.backend_options = {
-                "method": "statevector", "device": "GPU", "precision": "single"
-            }
+        if sim_method == "tensor_network":
+            # CPU-native MPS: handles 36+ qubits without the memory requirements of
+            # statevector.  cuTensorNet (GPU) fails on our 4-layer linear-chain circuits
+            # with CUTENSORNET_STATUS_INTERNAL_ERROR regardless of qubit count, so we
+            # use BackendSamplerV2 + AerSimulator(mps) which is reliable.
+            sampler = _BackendSamplerV2(backend=_AerSimulator(method="matrix_product_state"))
         else:
-            sampler.options.backend_options = {"method": "statevector", "device": "CPU"}
+            sampler = _AerSamplerV2()
+            if use_gpu:
+                sampler.options.backend_options = {
+                    "method": "statevector", "device": "GPU", "precision": "single"
+                }
+            else:
+                sampler.options.backend_options = {"method": "statevector", "device": "CPU"}
     else:
         from qiskit.primitives import StatevectorSampler
         sampler = StatevectorSampler()
+
+    print(f"\n{'='*60}")
+    print(f"  Quantum VQA starting")
+    print(f"  Backend : {_sim_display}")
+    print(f"  Ansatz  : {_ansatz_label}")
+    print(f"  Qubits  : {n_qubits}  ({n_qubits_gen} gen + {n_qubits_bat} bus)")
+    print(f"  Layers  : {n_layers}   Params : {len(params)}")
+    print(f"  Warm start: {warm_start}   Max time: {max_time_s}s")
+    print(f"{'='*60}\n")
 
     n_shots_cobyla = 512
 
@@ -471,14 +552,15 @@ def run_vqa_qiskit(
         # tile across layers so each layer's RY gates start at the warm-start angle
         x_star_tiled = np.tile(x_star, n_layers)
         theta0 = np.zeros(len(params))
-        theta0[n_half:] = 2.0 * np.arcsin(np.sqrt(np.clip(x_star_tiled, 0.0, 1.0)))
+        theta0[n_gamma:] = 2.0 * np.arcsin(np.sqrt(np.clip(x_star_tiled, 0.0, 1.0)))
     else:
         raise ValueError(f"Unknown warm_start strategy: {warm_start!r}")
 
-    _dbg.debug("warm_start=%s theta0 β-block mean=%.3f", warm_start, theta0[n_half:].mean())
+    _dbg.debug("warm_start=%s theta0 β-block mean=%.3f", warm_start, theta0[n_gamma:].mean())
 
     convergence_trace: list[float] = []
     _t_sampling = [0.0]   # accumulated wall time inside sampler calls (GPU/CPU statevector)
+    _deadline = [None if max_time_s is None else time.perf_counter() + max_time_s]
 
     # Plateau detection state — stochastic objectives keep COBYLA's trust region
     # noisy so rhoend never triggers; instead we stop when the best value hasn't
@@ -508,6 +590,9 @@ def run_vqa_qiskit(
         val_out = avg_q if np.isfinite(avg_q) else 1e12
         if track_convergence:
             convergence_trace.append(val_out)
+        # Wall-time cutoff
+        if _deadline[0] is not None and time.perf_counter() >= _deadline[0]:
+            raise _Plateau()
         # Plateau detection: track best and count stale evaluations
         if val_out < _best_val[0] * 0.99:
             _best_val[0] = val_out
@@ -566,8 +651,11 @@ def run_vqa_qiskit(
             break
 
     if phase_times is not None:
-        device_label = "GPU" if (_AER_AVAILABLE and use_gpu) else "CPU"
-        phase_times[f"Statevector sampling ({device_label})"] = _t_sampling[0]
+        if sim_method == "tensor_network":
+            sim_label = "MPS-CPU"
+        else:
+            sim_label = "GPU" if (_AER_AVAILABLE and use_gpu) else "CPU"
+        phase_times[f"Aer sampling ({sim_label})"] = _t_sampling[0]
         phase_times["COBYLA + proxy eval (CPU)"] = max(0.0, t_opt - _t_sampling[0])
         phase_times["Final 5000-shot extraction"] = time.perf_counter() - t_final_start
 
@@ -720,6 +808,8 @@ def run_quantum_siting(
     track_convergence: bool = False,
     _num_reads: int | None = None,
     device: str = "auto",
+    max_time_s: float | None = None,
+    ansatz: str = "auto",
 ):
     """Full hybrid quantum-classical siting pipeline.
 
@@ -729,12 +819,13 @@ def run_quantum_siting(
     generators       : list of generator dicts from assets
     batteries        : list of battery dicts from assets
     T                : number of hours to simulate
-    backend          : "qiskit" | "dwave"
+    backend          : "qiskit" | "aer_tn" | "dwave"
     n_candidates     : number of candidates to evaluate classically
     second_stage     : "ed" | "uc"
     warm_start       : "zeros" | "random" | "sdp" (Qiskit path only)
     track_convergence: record COBYLA objective per iteration (Qiskit path only)
     device           : "auto" | "GPU" | "CPU" statevector device (Qiskit path only)
+    ansatz           : "auto" | "butterfly" | "linear_chain" (Qiskit/Aer TN path only)
 
     Returns
     -------
@@ -771,7 +862,7 @@ def run_quantum_siting(
     # ── Quantum sieve ────────────────────────────────────────────────────────
     t_q_start = time.perf_counter()
 
-    if backend == "qiskit":
+    if backend in ("qiskit", "aer_tn"):
         # Qiskit VQA: we wrap proxy_fn with feasibility filter via the sieve
         # The sieve returns top candidates regardless of feasibility; we rely on
         # run_vqa_qiskit to return them sorted by proxy_cost (feasible first via P_budget)
@@ -783,6 +874,7 @@ def run_quantum_siting(
                 "demand_ref": demand_ref,
                 "T": T,
             }
+        _sim_method = "tensor_network" if backend == "aer_tn" else "statevector"
         raw_candidates, convergence_trace = run_vqa_qiskit(
             n_qubits_gen=G,
             n_qubits_bat=n_buses,
@@ -793,6 +885,9 @@ def run_quantum_siting(
             _sdp_ingredients=_sdp_ingredients,
             phase_times=runtime_phases,
             device=device,
+            sim_method=_sim_method,
+            max_time_s=max_time_s,
+            ansatz=ansatz,
         )
 
         # Post-filter to exactly B batteries placed (P_budget == 0)

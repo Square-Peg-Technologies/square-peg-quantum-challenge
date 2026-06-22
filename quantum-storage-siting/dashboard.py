@@ -42,8 +42,9 @@ SETTINGS_PATH = os.path.join(OUT_DIR, "dashboard_settings.json")
 HISTORY_PATH = os.path.join(OUT_DIR, "dashboard_history.json")
 
 # Short labels so dropdowns don't get cut off; full descriptions go in info=
-BACKEND_CHOICES = ["Qiskit (GPU)", "Qiskit (CPU)", "D-Wave SA"]
+BACKEND_CHOICES = ["Qiskit (GPU)", "Qiskit (CPU)", "Aer TN", "D-Wave SA"]
 BACKEND_INFO = ("Qiskit = local statevector VQA on GPU or CPU · "
+                "Aer TN = tensor-network MPS (scales to 36+ qubits) · "
                 "D-Wave SA = classical simulated annealing")
 STAGE_CHOICES = ["ED", "UC"]
 STAGE_INFO = "ED: fix commitment + placement · UC: re-solve commitment, fix placement"
@@ -552,24 +553,40 @@ def _latest_runtime_chart() -> str | None:
 
 def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: str,
                     n_candidates: float, second_stage_label: str, warm_start_label: str,
-                    force: bool = False):
+                    max_time_s: float = 300, ansatz_label: str = "Auto", force: bool = False):
     T = int(T)
     n_candidates = int(n_candidates)
-    backend = "qiskit" if backend_label.startswith("Qiskit") else "dwave"
+    if backend_label.startswith("Qiskit"):
+        backend = "qiskit"
+    elif backend_label == "Aer TN":
+        backend = "aer_tn"
+    else:
+        backend = "dwave"
     device = "GPU" if "(GPU)" in backend_label else ("CPU" if "(CPU)" in backend_label else "auto")
     second_stage = "ed" if second_stage_label.startswith("ED") else "uc"
     warm_start = warm_start_label.split(" ")[0]
+    _ansatz_map = {"Auto": "auto", "Butterfly": "butterfly", "Linear-chain HEA": "linear_chain"}
+    ansatz = _ansatz_map.get(ansatz_label, "auto")
 
     # Preflight: fail fast with a dismissible popup instead of a long failed run
     if backend == "qiskit" and device == "GPU" and not _gpu_available():
         raise gr.Error("GPU statevector is not available on this machine "
                        "(qiskit-aer-gpu missing or no GPU detected). "
                        "Switch the backend to Qiskit (CPU).")
+    if backend == "aer_tn":
+        try:
+            from solvers.quantum_siting import _AER_TN_AVAILABLE
+            if not _AER_TN_AVAILABLE:
+                raise gr.Error("Aer tensor-network simulator is not available — "
+                               "install qiskit-aer with tensor-network support.")
+        except ImportError:
+            raise gr.Error("qiskit-aer is not installed.")
 
     _save_settings("quantum", {
         "use_case": use_case, "assets_file": assets_file, "T": T,
         "backend": backend_label, "n_candidates": n_candidates,
         "second_stage": second_stage_label, "warm_start": warm_start_label,
+        "max_time_s": float(max_time_s), "ansatz": ansatz_label,
     })
 
     if not force:
@@ -583,18 +600,22 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
     state = {}
 
     def solve(grid, assets_mod, loc_mod, dc_bus, dc_mw):
-        from solvers.quantum_siting import run_quantum_siting, _AER_AVAILABLE
-        if backend == "qiskit":
+        from solvers.quantum_siting import run_quantum_siting, _AER_AVAILABLE, _AER_TN_AVAILABLE
+        if backend == "aer_tn":
+            print("Aer tensor-network simulator (MPS)")
+            print(f"Ansatz: {ansatz_label}  |  Warm-start: {warm_start}")
+        elif backend == "qiskit":
             if _AER_AVAILABLE:
                 print(f"Aer statevector device: {device}")
             else:
                 print("Aer: not installed — using Qiskit StatevectorSampler (CPU)")
-            print(f"Warm-start: {warm_start}")
+            print(f"Ansatz: {ansatz_label}  |  Warm-start: {warm_start}")
         result = run_quantum_siting(
             grid=grid, generators=assets_mod.GENERATORS, batteries=assets_mod.BATTERIES,
             T=T, backend=backend, n_candidates=n_candidates,
             second_stage=second_stage, warm_start=warm_start, track_convergence=True,
-            device=device,
+            device=device, max_time_s=float(max_time_s) if backend != "dwave" else None,
+            ansatz=ansatz,
         )
         from plots import save_runtime_breakdown
         state["runtime_chart"] = save_runtime_breakdown(
@@ -747,6 +768,11 @@ def build_app() -> gr.Blocks:
                 st_force = gr.Checkbox(value=False, label="Re-run even if cached",
                                        scale=0, min_width=150)
                 st_btn = gr.Button("▶ Run", variant="primary", scale=0, min_width=120)
+            gr.Markdown(
+                "_Suggested limits: **pjm5** → 60 s · **ieee14** → 120–300 s · "
+                "**ieee30** → 600–1200 s. "
+                "Benders stops early if optimal; the limit is a safety cap._"
+            )
             _st0 = _cached_siting(st_uc.value, st_assets.value, st_T.value, st_limit.value)
             st_summary = gr.Markdown(_st0[0])
             with gr.Tab("📈 Plots"):
@@ -778,9 +804,21 @@ def build_app() -> gr.Blocks:
                     value=_migrate_label(_setting("quantum", "warm_start", None),
                                          WARM_START_CHOICES, "zeros"),
                     label="Warm start (Qiskit)", info=WARM_START_INFO)
+                q_ansatz = gr.Dropdown(
+                    ["Auto", "Butterfly", "Linear-chain HEA"],
+                    value=_setting("quantum", "ansatz", "Auto"),
+                    label="Ansatz",
+                    info="Auto: butterfly for statevector, linear-chain for Aer TN")
+                q_limit = gr.Number(value=_setting("quantum", "max_time_s", 60),
+                                    label="Time limit (s)", scale=0, min_width=130)
                 q_force = gr.Checkbox(value=False, label="Re-run even if cached",
                                       scale=0, min_width=150)
                 q_btn = gr.Button("▶ Run", variant="primary", scale=0, min_width=120)
+            gr.Markdown(
+                "_Suggested limits: **pjm5** → 30–60 s · **ieee14** → 60–120 s · "
+                "**ieee30 (Aer TN)** → 60–90 s (CPU MPS — longer will overheat). "
+                "Applies to the VQA optimisation loop; D-Wave SA ignores this._"
+            )
             _q0 = _cached_quantum(q_uc.value, q_assets.value, q_T.value,
                                   q_backend.value, q_ncand.value,
                                   q_stage.value, q_warm.value)
@@ -844,7 +882,7 @@ def build_app() -> gr.Blocks:
                      outputs=[st_summary, st_term, st_plots, hist_table])
         q_btn.click(
             run_quantum_tab,
-            inputs=[q_uc, q_assets, q_T, q_backend, q_ncand, q_stage, q_warm, q_force],
+            inputs=[q_uc, q_assets, q_T, q_backend, q_ncand, q_stage, q_warm, q_limit, q_ansatz, q_force],
             outputs=[q_summary, q_term, q_plots, q_table, q_pf_gallery,
                      q_runtime, hist_table],
         )

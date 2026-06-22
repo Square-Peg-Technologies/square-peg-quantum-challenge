@@ -82,18 +82,13 @@ def _build_grid_graph(grid):
 # Label helpers — black text, white bbox, offset above node
 # ---------------------------------------------------------------------------
 
-def _label_pos(pos_g, offset=0.06):
-    """Return positions shifted slightly above each node for readable labels."""
-    return {n: (x, y + offset) for n, (x, y) in pos_g.items()}
-
-
 def _draw_labels(Gg, pos_g, ax, labels, font_size=8):
-    lpos = _label_pos(pos_g)
-    nx.draw_networkx_labels(
-        Gg, lpos, ax=ax, labels=labels,
-        font_color="black", font_size=font_size,
-        bbox=dict(fc="white", ec="none", alpha=0.85, pad=1.5),
-    )
+    import matplotlib.patheffects as _pe
+    _stroke = [_pe.withStroke(linewidth=3, foreground="white")]
+    for n, lbl in labels.items():
+        x, y = pos_g[n]
+        ax.text(x, y + 0.11, lbl, fontsize=font_size, ha="center", va="bottom",
+                color="black", zorder=6, path_effects=_stroke)
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +147,8 @@ def draw_network(Gg, pos_g, ax, gen_buses_set=None):
                            node_color=node_colors, node_size=node_sizes)
     nx.draw_networkx_edges(Gg, pos_g, ax=ax,
                            edge_color="#444444", width=2, arrows=False)
-    _draw_labels(Gg, pos_g, ax, {n: str(n) for n in Gg.nodes})
+    nx.draw_networkx_labels(Gg, pos_g, ax=ax, labels={n: str(n) for n in Gg.nodes},
+                            font_color="white", font_weight="bold", font_size=9)
 
 
 def _congested_edge_colors(result, branches_list=None):
@@ -310,12 +306,17 @@ def draw_siting_result(siting_result, gen_locations: dict, ax, _topo=None):
 # ---------------------------------------------------------------------------
 
 def _line_stress(uc_result, gen_locations, bat_locs, grid):
-    """Return max |flow|/fbar per line across all hours."""
+    """Return (max_stress, peak_hour) per line across all hours.
+
+    max_stress: array of max |flow|/fbar
+    peak_hour:  array of 1-indexed hour at which each line's max stress occurs
+    """
     import numpy as np
     PTDF  = np.array(grid.PTDF)
     fbar  = np.array(grid.fbar).flatten()
     n_bus = PTDF.shape[1]
     max_stress = np.zeros(len(fbar))
+    peak_hour  = np.ones(len(fbar), dtype=int)
 
     p_val  = uc_result.dispatch
     rp_val = uc_result.battery_charge
@@ -332,8 +333,11 @@ def _line_stress(uc_result, gen_locations, bat_locs, grid):
         flow = PTDF @ (inj - demand)
         for k in range(len(fbar)):
             if fbar[k] < 9000:
-                max_stress[k] = max(max_stress[k], abs(flow[k]) / fbar[k])
-    return max_stress
+                s = abs(flow[k]) / fbar[k]
+                if s > max_stress[k]:
+                    max_stress[k] = s
+                    peak_hour[k]  = t + 1
+    return max_stress, peak_hour
 
 
 def _stress_color(s):
@@ -356,7 +360,7 @@ def draw_siting_panel(uc_result, gen_locations, bat_locs, grid, ax, title, subti
     else:
         Gg, pos_g, branches_list = _topo
 
-    stress = _line_stress(uc_result, gen_locations, bat_locs, grid)
+    stress, peak_hour = _line_stress(uc_result, gen_locations, bat_locs, grid)
     fbar   = np.array(grid.fbar).flatten()
 
     edge_list   = [(f, t) for f, t, _ in branches_list]
@@ -365,13 +369,23 @@ def draw_siting_panel(uc_result, gen_locations, bat_locs, grid, ax, title, subti
     nx.draw_networkx_edges(Gg, pos_g, ax=ax, edgelist=edge_list,
                            edge_color=edge_colors, width=edge_widths, arrows=False)
 
-    edge_labels = {}
     for i, (f, t, _) in enumerate(branches_list):
-        if fbar[i] < 9000:
-            edge_labels[(f, t)] = f"{int(round(stress[i] * 100))}%"
-    nx.draw_networkx_edge_labels(Gg, pos_g, ax=ax, edge_labels=edge_labels,
-                                 font_size=7, font_color="black",
-                                 bbox=dict(fc="white", ec="none", alpha=0.8))
+        if fbar[i] >= 9000:
+            continue
+        x0, y0 = pos_g[f]
+        x1, y1 = pos_g[t]
+        mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+        # perpendicular offset so label sits beside the line, not on it
+        dx, dy = x1 - x0, y1 - y0
+        length = (dx**2 + dy**2) ** 0.5 or 1
+        ox, oy = -dy / length * 0.04, dx / length * 0.04
+        pct = int(round(stress[i] * 100))
+        lbl = f"{pct}%\nh{peak_hour[i]}" if stress[i] >= 0.70 else f"{pct}%"
+        color = _stress_color(stress[i]) if stress[i] >= 0.70 else "#555555"
+        import matplotlib.patheffects as _pe
+        ax.text(mx + ox, my + oy, lbl, fontsize=7, ha="center", va="center",
+                color=color, fontweight="bold" if stress[i] >= 0.70 else "normal",
+                zorder=4, path_effects=[_pe.withStroke(linewidth=2, foreground="white")])
 
     load_buses = _grid_load_buses(grid)
     gen_bus_set = set(gen_locations.values())
@@ -394,23 +408,24 @@ def draw_siting_panel(uc_result, gen_locations, bat_locs, grid, ax, title, subti
 
     _draw_split_nodes(ax, pos_g, node_roles, node_sizes)
 
-    for bus in bat_bus_set:
-        ax.scatter(*pos_g[bus], marker="*", s=500, color="white", zorder=5)
 
-    labels = {}
+    # White bus number centered inside each node
+    nx.draw_networkx_labels(Gg, pos_g, ax=ax, labels={n: str(n) for n in Gg.nodes},
+                            font_color="white", font_weight="bold", font_size=9)
+
+    # Black MW/battery status above nodes (with white halo via _draw_labels)
+    status = {}
     for n in Gg.nodes:
         if n in gen_bus_set:
             g_idx = [g for g, b in gen_locations.items() if b == n][0]
             committed = uc_result.commitment[g_idx, -1]
             output = uc_result.dispatch[g_idx, -1]
-            labels[n] = f"{n}\n{output:.0f}MW" if committed > 0.5 else f"{n}\n(off)"
+            status[n] = f"{output:.0f}MW" if committed > 0.5 else "(off)"
         elif n in bat_bus_set:
             b_indices = [b for b, bus in bat_locs.items() if bus == n]
-            soc_str = ",".join(f"B{b}" for b in b_indices)
-            labels[n] = f"{n}\n{soc_str}"
-        else:
-            labels[n] = str(n)
-    _draw_labels(Gg, pos_g, ax, labels, font_size=7)
+            status[n] = ",".join(f"B{b}" for b in b_indices)
+    if status:
+        _draw_labels(Gg, pos_g, ax, status, font_size=7)
 
     ax.set_title(title, fontsize=11, fontweight="bold", pad=10)
     ax.text(0.5, -0.04, subtitle, transform=ax.transAxes,
@@ -735,9 +750,10 @@ if __name__ == "__main__":
     draw_network(G, pos, ax, gen_buses_set=gen_buses_pjm5)
 
     constrained = {(f, t): f"{lim} MW" for f, t, lim in branches if lim > 0}
-    nx.draw_networkx_edge_labels(G, pos, ax=ax, edge_labels=constrained,
-                                 font_size=8, font_color="black",
-                                 bbox=dict(fc="white", ec="none", alpha=0.7))
+    for (f, t), lbl in constrained.items():
+        x = (pos[f][0] + pos[t][0]) / 2
+        y = (pos[f][1] + pos[t][1]) / 2
+        ax.text(x, y, lbl, fontsize=8, ha="center", va="center", color="black", zorder=4)
 
     gen_patch  = mpatches.Patch(color=gen_node_color,  label="Generator bus")
     load_patch = mpatches.Patch(color=load_node_color, label="Load / reference bus")

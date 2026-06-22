@@ -180,8 +180,9 @@ def prompt_quantum_options() -> tuple[str, int, str, str]:
     """Prompt for backend, n_candidates, second_stage, warm_start."""
     while True:
         print("Select quantum backend:")
-        print("  1. Qiskit (VQA, local simulator)")
+        print("  1. Qiskit (VQA, statevector simulator)")
         print("  2. D-Wave (Simulated Annealing)")
+        print("  3. Aer Tensor Network (VQA, MPS — scales to 36+ qubits)")
         raw = input("Enter number: ").strip()
         if raw == "1":
             backend = "qiskit"
@@ -189,7 +190,10 @@ def prompt_quantum_options() -> tuple[str, int, str, str]:
         elif raw == "2":
             backend = "dwave"
             break
-        print("Invalid selection. Please enter 1 or 2.")
+        elif raw == "3":
+            backend = "aer_tn"
+            break
+        print("Invalid selection. Please enter 1, 2, or 3.")
 
     while True:
         raw = input("How many candidates to evaluate classically? [default: 10]: ").strip()
@@ -218,7 +222,7 @@ def prompt_quantum_options() -> tuple[str, int, str, str]:
         print("Invalid selection. Please enter 1 or 2.")
 
     warm_start = "zeros"
-    if backend == "qiskit":
+    if backend in ("qiskit", "aer_tn"):
         while True:
             print("Warm-start strategy (arXiv:2505.00145):")
             print("  1. zeros  — theta=0, paper simulation default [default]")
@@ -240,7 +244,7 @@ def prompt_quantum_options() -> tuple[str, int, str, str]:
 
 
 def print_quantum_results(result: "QuantumSitingResult") -> None:
-    backend_label = "Qiskit VQA" if result.backend == "qiskit" else "D-Wave SA"
+    backend_label = {"qiskit": "Qiskit VQA", "aer_tn": "Aer TN (VQA)", "dwave": "D-Wave SA"}.get(result.backend, result.backend)
     stage_label = "ED" if result.second_stage == "ed" else "UC"
 
     warm_label = {"zeros": "θ=0 (paper sim default)", "random": "θ~Uniform[-2π,2π] (paper hardware)", "sdp": "LP-relaxation (paper Sec III)"}.get(result.warm_start, result.warm_start)
@@ -477,14 +481,20 @@ def main():
         result = run_siting_benders(grid, generators, batteries, T, time_limit_s=time_limit_s)
     else:
         backend, n_candidates, second_stage, warm_start = quantum_opts
-        if backend == "qiskit":
-            from solvers.quantum_siting import _AER_AVAILABLE, _GPU_AVAILABLE
-            if _AER_AVAILABLE and _GPU_AVAILABLE:
-                print("Aer: GPU detected — using GPU statevector")
-            elif _AER_AVAILABLE:
-                print("Aer: no GPU — using CPU statevector")
+        if backend in ("qiskit", "aer_tn"):
+            from solvers.quantum_siting import _AER_AVAILABLE, _GPU_AVAILABLE, _AER_TN_AVAILABLE
+            if backend == "aer_tn":
+                if _AER_TN_AVAILABLE:
+                    print("Aer: tensor-network simulator available")
+                else:
+                    print("WARNING: Aer tensor-network not available — install qiskit-aer with TN support")
             else:
-                print("Aer: not installed — using Qiskit StatevectorSampler")
+                if _AER_AVAILABLE and _GPU_AVAILABLE:
+                    print("Aer: GPU detected — using GPU statevector")
+                elif _AER_AVAILABLE:
+                    print("Aer: no GPU — using CPU statevector")
+                else:
+                    print("Aer: not installed — using Qiskit StatevectorSampler")
             print(f"Warm-start: {warm_start}")
         result = run_quantum_siting(
             grid=grid,
