@@ -10,6 +10,8 @@ Usage:
 
 import os
 import sys
+from dotenv import load_dotenv
+load_dotenv()  # loads .env into os.environment
 
 def main():
     token = os.environ.get("IQP_API_TOKEN")
