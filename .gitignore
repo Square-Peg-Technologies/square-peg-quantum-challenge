@@ -1,3 +1,4 @@
+.env
 .venv/
 Constitution/
 __pycache__/
