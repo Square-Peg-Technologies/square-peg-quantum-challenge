@@ -2,16 +2,28 @@
 Test script for IBM Quantum API access.
 
 Usage:
-    pip install qiskit qiskit-ibm-runtime --break-system-packages
-    export IQP_API_TOKEN=your_44_char_api_key
-    export IQP_INSTANCE=your_instance_crn   # optional, but recommended
-    python test_ibm_quantum_access.py
+    pip install qiskit qiskit-ibm-runtime python-dotenv --break-system-packages
+
+    Create a file named .env in the same folder as this script:
+        IQP_API_TOKEN=your_44_char_api_key
+        IQP_INSTANCE=your_instance_crn   # optional, but recommended
+
+    Then just run:
+        python test_ibm_quantum_access.py
+
+    (Environment variables set via `export` still work too and take
+    precedence over .env if both are set.)
 """
 
 import os
 import sys
-from dotenv import load_dotenv
-load_dotenv()  # loads .env into os.environment
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # loads variables from a local .env file, if present
+except ImportError:
+    print("NOTE: python-dotenv not installed — .env file will be ignored.")
+    print("Run: pip install python-dotenv --break-system-packages\n")
 
 def main():
     token = os.environ.get("IQP_API_TOKEN")
@@ -54,6 +66,7 @@ def main():
     # --- Step 3: Run a tiny test circuit on the least busy backend ---
     try:
         from qiskit import QuantumCircuit
+        from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
         from qiskit_ibm_runtime import SamplerV2 as Sampler
 
         backend = service.least_busy(operational=True, simulator=False)
@@ -63,8 +76,12 @@ def main():
         qc.h(0)
         qc.measure(0, 0)
 
+        # Transpile to the backend's native gate set / qubit layout
+        pm = generate_preset_pass_manager(backend=backend, optimization_level=1)
+        isa_qc = pm.run(qc)
+
         sampler = Sampler(mode=backend)
-        job = sampler.run([qc])
+        job = sampler.run([isa_qc])
         print(f"✅ Job submitted. Job ID: {job.job_id()}")
         print("   (Job is queued/running — check status with job.status() or the IBM Quantum dashboard.)")
     except Exception as e:
