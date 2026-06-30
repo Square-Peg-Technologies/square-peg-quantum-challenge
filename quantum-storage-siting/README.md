@@ -33,10 +33,12 @@ Formulation/IonQ_ORNL_Unit_Commitment_2505.00145.pdf).
    cost function, producing a ranked shortlist. Each candidate is then evaluated
    with a full classical UC or ED solve.
 
-   Two quantum backends:
+   Three quantum backends:
    - Qiskit VQA: Butterfly ansatz (arXiv:2505.00145), COBYLA optimizer, local
      statevector simulator. GPU-accelerated via qiskit-aer-gpu when available.
      Compatible with IonQ Forte gate hardware.
+   - Aer Tensor Network (MPS): Linear-chain HEA ansatz, matrix product state
+     simulator. Scales to 36+ qubits (ieee30). No GPU required.
    - D-Wave Simulated Annealing: QUBO formulation sampled with
      SimulatedAnnealingSampler. No QPU connection required.
 
@@ -164,7 +166,7 @@ line limits or datacenter size:
     cd use_cases/ieee14 && python site_datacenter.py
 
 Confirmed quantum siting result (Qiskit VQA + UC, T=24h, n=10):
-Best placement buses (2, 4, 6, 7), cost $199,804 in ~2.5 min on RTX 3080 Ti.
+Best placement buses (2, 4, 6, 7), cost $199,804 in ~2.5 min on GPU.
 
 ### LMP and Shadow Price Extraction
 
@@ -194,9 +196,92 @@ Use assets_dc_bus4.py or assets_dc_bus5.py for non-trivial output.
 
 ## Running the Tool
 
-Two ways to run: the interactive CLI (below) or the browser dashboard
-(see "Dashboard (Browser UI)" — recommended for repeated experiments since
-it caches results and keeps run history).
+Two ways to run: the browser dashboard (recommended) or the interactive CLI.
+
+## Dashboard (Browser UI)
+
+A Gradio web dashboard wraps the same solvers as main.py for browser-based runs —
+no terminal interaction needed once it is launched.
+
+Set up the environment first if you haven't already:
+
+    pyenv local 3.11.12
+    python -m venv .venv
+    .venv/bin/pip install -r requirements.txt
+    .venv/bin/pip install -r requirements-gpu.txt   # GPU machines only (CUDA 12)
+
+Launch:
+
+    .venv/bin/python dashboard.py
+
+then open http://127.0.0.1:7860. Stop the server with Ctrl-C. Note the server
+does not hot-reload: after pulling code changes, restart it.
+
+### Layout
+
+One tab per problem, each with a compact control bar of inputs on top and
+results below in sub-tabs:
+
+    Economic Dispatch     use case, assets, hours T
+    Unit Commitment       use case, assets, hours T
+    Battery Siting (MIP)  + time limit (s)
+    Quantum Siting        + backend, candidates, 2nd stage, warm start
+    Power Flow            per-candidate network diagrams (read-only gallery)
+
+Sub-tabs per problem: Results (quantum only — candidate ranking table),
+Plots (all of the run's plots side by side, scaled to fit the window),
+Runtime (quantum only — phase breakdown chart), and Terminal — the exact
+CLI output including full tracebacks, with a copy button for easy debugging.
+
+The quantum backend dropdown exposes all three backends: Qiskit (GPU),
+Qiskit (CPU), Aer Tensor Network (MPS), and D-Wave SA. Selecting GPU on a
+machine without one shows a dismissible error popup and nothing runs; any
+mid-run failure pops a warning toast and the traceback lands in the Terminal
+sub-tab.
+
+### Result caching — runs are never repeated by accident
+
+Every run is recorded with its exact input settings. Clicking Run with settings
+that were already run loads the stored results instantly (summary banner says
+"✅ Already run — loaded from <timestamp>") instead of re-solving. Tick the
+"Re-run even if cached" checkbox next to the Run button to force a fresh solve.
+On page load each tab is pre-seeded with the cached results for your last-used
+settings.
+
+Plots are snapshotted into a per-run folder at record time, so cached runs keep
+showing the correct images even after later runs overwrite the shared filenames
+in outputs/.
+
+### Run history
+
+A history strip at the bottom of every problem tab lists all past runs (any
+problem, newest first). Clicking a row reloads that run's plots and terminal
+log into a viewer below the table. History survives restarts.
+
+### Power Flow tab
+
+After a Quantum Siting run, this tab shows one network diagram per evaluated
+candidate placement, ranked by true cost — committed/off generators, battery
+buses, and per-line max loading (orange ≥70%, red ≥90%). The gallery reflects
+the latest quantum run; "Reload from disk" restores it after a server restart.
+
+### Comparing classical vs quantum
+
+Battery Siting (MIP) and Quantum Siting solve the same problem, and the quantum
+tab generates the same grid + dispatch-overview plots for its best placement
+(saved as quantum_*.png vs siting_*.png so neither overwrites the other). The
+quantum Runtime chart is tagged with the backend, so Qiskit (GPU) vs (CPU)
+timing comparisons keep separate charts.
+
+### Files written by the dashboard
+
+    outputs/dashboard_settings.json   last-used inputs per tab (restored on launch)
+    outputs/dashboard_history.json    run history index (cache keys, summaries)
+    outputs/dashboard_runs/           per-run terminal logs + plot snapshots
+    outputs/powerflow/                latest quantum run's candidate diagrams
+
+
+## CLI
 
 Always use the venv Python:
 
@@ -219,8 +304,9 @@ Step 1 — optimization:
 For option 4 only, additional sub-prompts:
 
     Select quantum backend:
-      1. Qiskit (VQA, local simulator)
+      1. Qiskit (VQA, statevector simulator)
       2. D-Wave (Simulated Annealing)
+      3. Aer Tensor Network (VQA, MPS — scales to 36+ qubits)
 
     How many candidates to evaluate classically? [default: 10]:
 
@@ -228,7 +314,7 @@ For option 4 only, additional sub-prompts:
       1. ED dispatch (fix commitment and placement)
       2. Full UC re-solve (fix placement only)
 
-    Warm-start strategy (Qiskit backend only):
+    Warm-start strategy (Qiskit and Aer TN backends only):
       1. zeros  — theta=0, paper simulation default [default]
       2. random — theta~Uniform[-2pi,2pi], paper IonQ hardware default
       3. sdp    — LP-relaxation warm start, paper Section III
@@ -278,82 +364,6 @@ Use assets_dc_bus4.py or assets_dc_bus5.py to get a non-trivial P_loc signal.
     --------------------------------------------
     1      (2, 4, 6, 7)                 199,804
     ...
-
-
-## Dashboard (Browser UI)
-
-A Gradio web dashboard wraps the same solvers as main.py for browser-based runs —
-no terminal interaction needed once it is launched.
-
-Launch:
-
-    .venv/bin/python dashboard.py
-
-then open http://127.0.0.1:7860. Stop the server with Ctrl-C. Note the server
-does not hot-reload: after pulling code changes, restart it.
-
-### Layout
-
-One tab per problem, each with a compact control bar of inputs on top and
-results below in sub-tabs:
-
-    Economic Dispatch     use case, assets, hours T
-    Unit Commitment       use case, assets, hours T
-    Battery Siting (MIP)  + time limit (s)
-    Quantum Siting        + backend, candidates, 2nd stage, warm start
-    Power Flow            per-candidate network diagrams (read-only gallery)
-
-Sub-tabs per problem: Results (quantum only — candidate ranking table),
-Plots (all of the run's plots side by side, scaled to fit the window),
-Runtime (quantum only — phase breakdown chart), and Terminal — the exact
-CLI output including full tracebacks, with a copy button for easy debugging.
-
-The quantum backend dropdown has separate Qiskit (GPU) and Qiskit (CPU) items
-so the control always shows which device you are using. Selecting GPU on a
-machine without one shows a dismissible error popup and nothing runs; any
-mid-run failure pops a warning toast and the traceback lands in the Terminal
-sub-tab.
-
-### Result caching — runs are never repeated by accident
-
-Every run is recorded with its exact input settings. Clicking Run with settings
-that were already run loads the stored results instantly (summary banner says
-"✅ Already run — loaded from <timestamp>") instead of re-solving. Tick the
-"Re-run even if cached" checkbox next to the Run button to force a fresh solve.
-On page load each tab is pre-seeded with the cached results for your last-used
-settings.
-
-Plots are snapshotted into a per-run folder at record time, so cached runs keep
-showing the correct images even after later runs overwrite the shared filenames
-in outputs/.
-
-### Run history
-
-A history strip at the bottom of every problem tab lists all past runs (any
-problem, newest first). Clicking a row reloads that run's plots and terminal
-log into a viewer below the table. History survives restarts.
-
-### Power Flow tab
-
-After a Quantum Siting run, this tab shows one network diagram per evaluated
-candidate placement, ranked by true cost — committed/off generators, battery
-buses, and per-line max loading (orange ≥70%, red ≥90%). The gallery reflects
-the latest quantum run; "Reload from disk" restores it after a server restart.
-
-### Comparing classical vs quantum
-
-Battery Siting (MIP) and Quantum Siting solve the same problem, and the quantum
-tab generates the same grid + dispatch-overview plots for its best placement
-(saved as quantum_*.png vs siting_*.png so neither overwrites the other). The
-quantum Runtime chart is tagged with the backend, so Qiskit (GPU) vs (CPU)
-timing comparisons keep separate charts.
-
-### Files written by the dashboard
-
-    outputs/dashboard_settings.json   last-used inputs per tab (restored on launch)
-    outputs/dashboard_history.json    run history index (cache keys, summaries)
-    outputs/dashboard_runs/           per-run terminal logs + plot snapshots
-    outputs/powerflow/                latest quantum run's candidate diagrams
 
 
 ## Quantum Siting — How It Works
@@ -417,6 +427,15 @@ Qiskit VQA path:
     COBYLA optimizer, 512 shots/iteration, up to 300 iterations
     5,000-shot final extraction, top-N candidates passed to classical stage
     Total: ~154,000 proxy evaluations (all analytical) + N UC/ED solves
+    Simulator: qiskit-aer statevector (CPU or GPU)
+
+Aer Tensor Network (MPS) path:
+    Linear-chain HEA ansatz, L=4 layers
+    Parameters: 2 × L × (G + N)  →  214 for ieee30 (36 qubits)
+    Same COBYLA optimizer and shot counts as Qiskit VQA path
+    Simulator: qiskit-aer matrix_product_state — memory scales with
+    entanglement, not 2^n, enabling 36-qubit runs without GPU
+    Warm-start strategies identical to Qiskit VQA path
 
 D-Wave SA path:
     Full QUBO: linear u, linear s, u-u, s-s, and cross u-s interaction terms
@@ -435,9 +454,10 @@ pass/fail outcomes and error messages for post-run diagnosis.
 
 ## CPU vs GPU Support
 
-The Qiskit VQA statevector simulation runs on either CPU or GPU. Everything
-else (ED, UC, Siting MIP, D-Wave SA, the dashboard) is CPU-only and unaffected
-by this choice.
+The Qiskit VQA statevector simulation runs on either CPU or GPU. The Aer
+Tensor Network (MPS) backend runs on CPU only — its memory advantage over
+statevector makes GPU unnecessary for the qubit counts targeted here.
+Everything else (ED, UC, Siting MIP, D-Wave SA, the dashboard) is CPU-only.
 
 ### CPU-only install (default)
 
@@ -479,7 +499,7 @@ on a machine without one shows an error popup and nothing runs.
 Programmatic: run_quantum_siting(..., device="auto" | "GPU" | "CPU").
 
 At 19 qubits (ieee14): 2¹⁹ × 4 bytes = 2 MB statevector — trivial for any
-modern GPU. RTX 3080 Ti (16 GB VRAM) runs the full VQA in ~2.5 minutes.
+modern GPU. A typical consumer GPU runs the full VQA in ~2.5 minutes.
 
 Always source the venv before running to ensure the venv's Qiskit build is
 used rather than any system-level installation.
@@ -509,6 +529,12 @@ used rather than any system-level installation.
             locations.py        Fixed generator locations; placeholder battery locations.
             site_datacenter.py  Sweeps all 14 buses, ranks by ED cost, writes assets files.
             extract_lmps.py     Standalone diagnostic: exports LMPs and shadow prices to CSV.
+
+        ieee30/
+            ieee30.py           IEEE 30-bus grid: 30 buses, 6 generators (335 MW total).
+            assets.py           6 generators, batteries.
+            locations.py        Generator and battery bus assignments.
+            case30.m            MATPOWER source data.
 
     solvers/
         results.py          EDResult, UCResult, SitingResult, QuantumSitingResult.
@@ -544,15 +570,15 @@ used rather than any system-level installation.
 
 ## Solver Performance
 
-    Optimization       Backend          pjm5 (T=24)     ieee14 (T=24)
-    ------------       -------          -----------     -------------
-    Economic Dispatch  HiGHS (QP)       < 1s            < 1s
-    Unit Commitment    SCIP (MIQP)      5-30s           5-30s
-    Battery Siting     SCIP × C(N,B)   ~1 min          ~15-20 min
-    Quantum Siting     Qiskit VQA+UC   ~30s            ~2.5 min (GPU)
-    Quantum Siting     D-Wave SA+UC    ~5s             ~1 min
+    Optimization       Backend          pjm5 (T=24)     ieee14 (T=24)    ieee30 (T=24)
+    ------------       -------          -----------     -------------    -------------
+    Economic Dispatch  HiGHS (QP)       < 1s            < 1s             < 1s
+    Unit Commitment    SCIP (MIQP)      < 5s            < 5s             < 5s
+    Battery Siting     Benders/SCIP     < 1 min         ~15s             ~30s
+    Quantum Siting     Qiskit VQA+UC    ~10s            ~2.5 min (GPU)   —
+    Quantum Siting     Aer TN (MPS)+UC  —               ~1.5 min         ~40-70s
+    Quantum Siting     D-Wave SA+UC     ~5s             ~1 min           —
 
-Battery Siting runtime: C(5,2)=10 for pjm5; C(14,4)=1,001 for ieee14.
 Quantum Siting quantum phase is independent of T; classical stage scales ~linearly
 with T and n_candidates.
 
