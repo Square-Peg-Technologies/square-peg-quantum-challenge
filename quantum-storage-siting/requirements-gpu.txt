@@ -1,8 +1,7 @@
 # GPU acceleration for the Qiskit VQA path — install AFTER requirements.txt:
 #   .venv/bin/pip install -r requirements-gpu.txt
 # Requires CUDA 12. qiskit-aer-gpu replaces qiskit-aer (same import name,
-# GPU statevector enabled). 0.15.x is the latest GPU build; needs Qiskit <2.0
-# (tracked in Todo FT-5).
+# GPU statevector enabled).
 
 qiskit-aer-gpu==0.15.1
 

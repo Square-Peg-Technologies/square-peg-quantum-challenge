@@ -476,10 +476,8 @@ requirements-gpu.txt installs qiskit-aer-gpu plus the cuQuantum/CUDA wheels.
 qiskit-aer-gpu replaces the CPU qiskit-aer in place (same import name), so
 install it second. Requires an NVIDIA GPU with CUDA 12.
 
-Note: qiskit-aer-gpu 0.15.x is the latest GPU build and requires Qiskit <2.0
-(requirements.txt pins qiskit<2.0 for this reason — see Todo FT-5 for the
-Qiskit 2.x upgrade path). The CPU-only qiskit-aer 0.17.x supports Qiskit 2.x
-but has no GPU equivalent yet.
+Note: qiskit-aer-gpu 0.15.x is the latest GPU build. The CPU-only
+qiskit-aer 0.17.x supports newer Qiskit versions but has no GPU equivalent yet.
 
 ### Selecting the device at runtime
 
