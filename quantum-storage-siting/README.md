@@ -5,12 +5,14 @@ on power system test grids. Implements four levels of power system optimization 
 Economic Dispatch, Unit Commitment, Battery Siting, and Quantum Siting — all
 including battery storage dynamics.
 
-Two use cases are included:
+Three use cases are included:
 
 - pjm5: PJM 5-bus system (MATPOWER case5). 5 buses, 6 lines, 3 generators,
   2 batteries. 8 qubits for quantum siting.
 - ieee14: IEEE 14-bus system (MATPOWER case14) with a 200 MW AI datacenter load.
   14 buses, 20 branches, 5 generators, 4 batteries. 19 qubits for quantum siting.
+- ieee30: IEEE 30-bus system (MATPOWER case30). 30 buses, 41 branches,
+  6 generators (335 MW total). 36 qubits for quantum siting.
 
 Based on the IonQ/ORNL hybrid quantum-classical algorithm (arXiv:2505.00145,
 Formulation/IonQ_ORNL_Unit_Commitment_2505.00145.pdf).
