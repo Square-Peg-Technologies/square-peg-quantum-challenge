@@ -8,27 +8,32 @@
 #
 # The DCOPF framework uses linear costs. The full quadratic F(p) = a*p^2 + b*p + c
 # from the paper is approximated here by the incremental term b only.
-# 24 time steps (24 hours x 1 hourly interval)
+# 24 time steps (24 hours x 1 hourly interval), repeated daily out to a
+# one-week (168h) horizon — battery SoC free-floats continuously across
+# the week, no reset between days.
 
 from dcopf.cases.base import BaseCase, BaseCaseDescription
 import numpy as np
 
-T = 24
+# 24-hour demand shape scaled to match the IonQ/ORNL paper (arXiv:2505.00145)
+# demand range. Paper uses loads [170, 520, 1100, 330] MW across 4 hours;
+# we extend to 24 hours with a realistic daily shape spanning the same range.
+# Base demand (Bus2=300, Bus3=300, Bus4=400 MW) * factor = nodal demand.
+# Factors below 0.60 allow Units 1+2 to serve load without Unit 0 (max 600 MW).
+# Factors below 0.20 allow Unit 2 alone to serve load (max 200 MW).
+DAILY_FACTORS = [0.30, 0.30, 0.30, 0.33, 0.38, 0.45,  # hours 0-5:  night 300-450 MW
+                 0.55, 0.65, 0.80, 0.95, 1.05, 1.10,  # hours 6-11: ramp to peak 1100 MW
+                 1.08, 1.05, 1.00, 0.98, 0.95, 0.90,  # hours 12-17: midday/afternoon
+                 0.80, 0.70, 0.60, 0.52, 0.42, 0.33]  # hours 18-23: evening ramp-down
+
+DAYS = 7
+T = 24 * DAYS  # one week — the daily shape above repeats DAYS times
 
 class Case(BaseCase):
     def __init__(self):
         super().__init__(CaseDescription(), T)
 
-        # 24-hour demand shape scaled to match the IonQ/ORNL paper (arXiv:2505.00145)
-        # demand range. Paper uses loads [170, 520, 1100, 330] MW across 4 hours;
-        # we extend to 24 hours with a realistic daily shape spanning the same range.
-        # Base demand (Bus2=300, Bus3=300, Bus4=400 MW) * factor = nodal demand.
-        # Factors below 0.60 allow Units 1+2 to serve load without Unit 0 (max 600 MW).
-        # Factors below 0.20 allow Unit 2 alone to serve load (max 200 MW).
-        self.factors = [0.30, 0.30, 0.30, 0.33, 0.38, 0.45,  # hours 0-5:  night 300-450 MW
-                        0.55, 0.65, 0.80, 0.95, 1.05, 1.10,  # hours 6-11: ramp to peak 1100 MW
-                        1.08, 1.05, 1.00, 0.98, 0.95, 0.90,  # hours 12-17: midday/afternoon
-                        0.80, 0.70, 0.60, 0.52, 0.42, 0.33]  # hours 18-23: evening ramp-down
+        self.factors = DAILY_FACTORS * DAYS
 
         # self.noise_power_demand = np.sqrt(3)
         # self.noise_generator_cost = 2.88

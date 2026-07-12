@@ -20,17 +20,17 @@ def prompt_optimization() -> int:
         print("Invalid selection. Please enter 1, 2, 3, or 4.")
 
 
-def prompt_hours() -> int:
+def prompt_hours(max_hours: int) -> int:
     while True:
-        raw = input("How many hours to simulate? (1-24): ").strip()
+        raw = input(f"How many hours to simulate? (1-{max_hours}): ").strip()
         try:
             val = int(raw)
         except ValueError:
-            print("Invalid input. Please enter a whole number between 1 and 24.")
+            print(f"Invalid input. Please enter a whole number between 1 and {max_hours}.")
             continue
-        if 1 <= val <= 24:
+        if 1 <= val <= max_hours:
             return val
-        print("Invalid input. Please enter a whole number between 1 and 24.")
+        print(f"Invalid input. Please enter a whole number between 1 and {max_hours}.")
 
 
 def prompt_use_case() -> tuple[str, str]:
@@ -442,11 +442,15 @@ def main():
     quantum_opts = None
     if opt == 4:
         quantum_opts = prompt_quantum_options()
-    T = prompt_hours()
     use_case_name, use_case_path = prompt_use_case()
     assets_file_name, grid_mod, assets_mod, loc_mod = load_use_case(use_case_name, use_case_path)
 
     grid = grid_mod.Case()
+
+    # Bound the hours prompt by how many hours of demand data this case
+    # actually has (e.g. ieee14 has a week/168h; other cases may still be 24h).
+    max_hours = grid.power_demand.shape[1]
+    T = prompt_hours(max_hours)
 
     # Inject datacenter load if the assets file specifies one
     dc_bus = getattr(assets_mod, "DATACENTER_BUS", None)

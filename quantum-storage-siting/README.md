@@ -14,6 +14,10 @@ Three use cases are included:
 - ieee30: IEEE 30-bus system (MATPOWER case30). 30 buses, 41 branches,
   6 generators (335 MW total). 36 qubits for quantum siting.
 
+Each case's daily demand shape repeats over a full week (168 hours); any
+horizon from 1 up to 168 hours can be requested (battery SoC free-floats
+continuously, with no reset between days).
+
 Based on the IonQ/ORNL hybrid quantum-classical algorithm (arXiv:2505.00145,
 Formulation/IonQ_ORNL_Unit_Commitment_2505.00145.pdf).
 
@@ -76,7 +80,8 @@ Generators (from arXiv:2505.00145 Table I):
 
 Batteries: 2 × 50 MW / 200 MWh, 85% efficiency, initial SoC 50%.
 
-Demand: 24-hour shape calibrated to arXiv:2505.00145 Table IV (170-1100 MW total).
+Demand: 24-hour shape calibrated to arXiv:2505.00145 Table IV (170-1100 MW total),
+repeated over 7 days for a one-week (168h) horizon.
 Unit 2 always runs; Unit 0 is the swing unit; Unit 1 ramps mid-day.
 
 Quantum siting: 3 gen + 5 bus = 8 qubits, C(5,2) = 10 placements.
@@ -111,7 +116,9 @@ Generator buses: 1, 2, 3, 6, 8
 Load buses:      2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14
 Transformer branches: 4-7 (ratio 0.978), 4-9 (ratio 0.969), 5-6 (ratio 0.932)
 
-Base load: 259 MW across 11 buses. Demand shaped 0.45x (night) to 1.40x (peak).
+Base load: 259 MW across 11 buses. Demand shaped 0.45x (night) to 1.40x (peak),
+repeated daily over a one-week (168h) horizon — battery SoC free-floats
+continuously across the week, no reset between days.
 With 200 MW datacenter: peak total demand ~563 MW.
 
 Key transmission bottlenecks (line limits tightened from original unlimited case14):
@@ -321,22 +328,26 @@ For option 4 only, additional sub-prompts:
       2. random — theta~Uniform[-2pi,2pi], paper IonQ hardware default
       3. sdp    — LP-relaxation warm start, paper Section III
 
-Step 2 — hours (1-24):
-
-    How many hours to simulate? (1-24):
-
-Step 3 — use case:
+Step 2 — use case:
 
     Available use cases:
       1. ieee14
-      2. pjm5
+      2. ieee30
+      3. pjm5
 
-Step 4 — assets file (scanned from the use case directory):
+Step 3 — assets file (scanned from the use case directory):
 
     Available assets files:
       1. assets.py
       2. assets_dc_bus1.py
       ...
+
+Step 4 — hours (bounded by the loaded case's actual demand profile). All
+three use cases now build a one-week, 168-hour profile with the daily shape
+repeating 7x, so the prompt's max scales to whatever the selected case
+supports:
+
+    How many hours to simulate? (1-168):
 
 ### Example Output (Quantum Siting, ieee14, T=24h)
 
@@ -580,7 +591,10 @@ used rather than any system-level installation.
     Quantum Siting     D-Wave SA+UC     ~5s             ~1 min           —
 
 Quantum Siting quantum phase is independent of T; classical stage scales ~linearly
-with T and n_candidates.
+with T and n_candidates. Figures above are measured at T=24 (one day); all
+three cases now support T up to 168 (one week) — expect the classical
+stage/ED/UC timings to scale roughly 7x at T=168, since the quantum sieve
+itself does not depend on T.
 
 
 ## Environment Setup

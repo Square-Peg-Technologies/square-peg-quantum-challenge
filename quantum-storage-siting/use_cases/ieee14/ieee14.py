@@ -10,27 +10,36 @@
 #   Gen 5 — bus 8: p_min=20, p_max=100 MW, b=$40/MWh
 #
 # Total installed capacity: 772 MW.
-# Base load: 259 MW (11 load buses).  24h demand shaped by factors below.
+# Base load: 259 MW (11 load buses).  24h demand shaped by factors below,
+# repeated daily out to a one-week (168h) horizon for Phase 3 (battery SoC
+# free-floats continuously across the week — no reset between days).
 # Line limits (fbar) derived from branch reactances — see CaseDescription.
 
 from dcopf.cases.base import BaseCase, BaseCaseDescription
 import numpy as np
 
-T = 24
+# 24-hour demand shape. Base load (factor=1.0) = 259 MW.
+# Min (0.45) ≈ 117 MW night; peak (1.40) ≈ 363 MW midday.
+DAILY_FACTORS = [
+    0.45, 0.45, 0.45, 0.50, 0.55, 0.65,  # hours 0-5:  night
+    0.80, 0.90, 1.00, 1.10, 1.20, 1.30,  # hours 6-11: morning ramp
+    1.35, 1.40, 1.35, 1.30, 1.20, 1.10,  # hours 12-17: midday/afternoon
+    1.00, 0.90, 0.80, 0.70, 0.60, 0.50,  # hours 18-23: evening ramp-down
+]
+
+DAYS = 7
+T = 24 * DAYS  # one week — the daily shape above repeats DAYS times
 
 
 class Case(BaseCase):
     def __init__(self):
         super().__init__(CaseDescription(), T)
 
-        # 24-hour demand shape. Base load (factor=1.0) = 259 MW.
-        # Min (0.45) ≈ 117 MW night; peak (1.40) ≈ 363 MW midday.
-        self.factors = [
-            0.45, 0.45, 0.45, 0.50, 0.55, 0.65,  # hours 0-5:  night
-            0.80, 0.90, 1.00, 1.10, 1.20, 1.30,  # hours 6-11: morning ramp
-            1.35, 1.40, 1.35, 1.30, 1.20, 1.10,  # hours 12-17: midday/afternoon
-            1.00, 0.90, 0.80, 0.70, 0.60, 0.50,  # hours 18-23: evening ramp-down
-        ]
+        # Weekly demand shape: the daily profile above repeats for each of
+        # DAYS days. Callers may still run fewer hours (main.py/dashboard
+        # prompt for T <= this array's column count); the profile just
+        # repeats identically day over day either way.
+        self.factors = DAILY_FACTORS * DAYS
 
         pd0 = self.power_demand.flatten()
         gc0 = self.generator_cost.flatten()

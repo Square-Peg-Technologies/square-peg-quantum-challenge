@@ -112,7 +112,9 @@ def test_grid_fbar_length(grid):
 
 
 def test_grid_demand_shape(grid):
-    assert np.array(grid.power_demand).shape == (N_BUSES, 24)
+    # Phase 3 extends the daily profile to a full week (168h); the daily
+    # shape repeats DAYS times rather than being capped at 24h.
+    assert np.array(grid.power_demand).shape == (N_BUSES, 24 * _ieee14_mod.DAYS)
 
 
 def test_grid_demand_non_negative(grid):
@@ -144,10 +146,11 @@ def test_datacenter_injection_increases_demand(grid, grid_dc4):
 
 
 def test_datacenter_injection_amount(grid, grid_dc4):
-    # Should add exactly 200 MW × 24 hours = 4800 MWh total
+    # Should add exactly 200 MW x (number of hours in the grid) total
+    n_hours = np.array(grid.power_demand).shape[1]
     base_total = np.array(grid.power_demand).sum(axis=0).sum()
     dc_total = np.array(grid_dc4.power_demand).sum(axis=0).sum()
-    assert abs((dc_total - base_total) - 200.0 * 24) < 1e-6
+    assert abs((dc_total - base_total) - 200.0 * n_hours) < 1e-6
 
 
 def test_datacenter_only_affects_bus4(grid, grid_dc4):

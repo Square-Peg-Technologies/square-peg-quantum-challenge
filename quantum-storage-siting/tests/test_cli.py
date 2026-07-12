@@ -23,12 +23,20 @@ def test_prompt_optimization_accepts_all():
 
 def test_prompt_hours_rejects_bad():
     with patch("builtins.input", side_effect=["abc", "1.5", "0", "25", "-1", "8"]):
-        result = prompt_hours()
+        result = prompt_hours(24)
     assert result == 8
 
 
 def test_prompt_hours_accepts_valid():
     for val, expected in [("1", 1), ("12", 12), ("24", 24)]:
         with patch("builtins.input", side_effect=[val]):
-            result = prompt_hours()
+            result = prompt_hours(24)
         assert result == expected
+
+
+def test_prompt_hours_respects_max_hours():
+    # A case with a longer horizon (e.g. ieee14's 168h week) should accept
+    # values beyond the old 24h cap, and still reject values past its own max.
+    with patch("builtins.input", side_effect=["200", "168"]):
+        result = prompt_hours(168)
+    assert result == 168

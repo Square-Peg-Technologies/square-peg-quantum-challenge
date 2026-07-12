@@ -179,9 +179,26 @@ def list_assets(use_case: str) -> list[str]:
     return [os.path.basename(p) for p in found]
 
 
+def _max_hours_for(use_case: str, assets_file: str | None) -> int:
+    """How many hours of demand data this use case's grid actually has
+    (e.g. ieee14 is a week/168h; other cases may still be 24h)."""
+    if not use_case or not assets_file:
+        return 24
+    try:
+        grid, _, _, _, _ = _load_case(use_case, assets_file)
+        return int(grid.power_demand.shape[1])
+    except Exception:
+        return 24
+
+
 def _on_use_case_change(use_case: str):
     choices = list_assets(use_case)
-    return gr.update(choices=choices, value=choices[0] if choices else None)
+    assets_default = choices[0] if choices else None
+    max_hours = _max_hours_for(use_case, assets_default)
+    return (
+        gr.update(choices=choices, value=assets_default),
+        gr.update(maximum=max_hours),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -691,10 +708,12 @@ def _control_bar(tab: str):
     if assets_default not in assets:
         assets_default = assets[0] if assets else None
 
+    max_hours = _max_hours_for(uc_default, assets_default)
+
     use_case = gr.Dropdown(choices=use_cases, value=uc_default, label="Use case")
     assets_file = gr.Dropdown(choices=assets, value=assets_default, label="Assets")
-    T = gr.Slider(1, 24, value=_setting(tab, "T", 4), step=1, label="Hours T")
-    use_case.change(_on_use_case_change, inputs=use_case, outputs=assets_file)
+    T = gr.Slider(1, max_hours, value=min(_setting(tab, "T", 4), max_hours), step=1, label="Hours T")
+    use_case.change(_on_use_case_change, inputs=use_case, outputs=[assets_file, T])
     return use_case, assets_file, T
 
 
