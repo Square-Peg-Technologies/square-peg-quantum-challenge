@@ -1,7 +1,57 @@
 import os
+import textwrap
 import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+
+
+# ---------------------------------------------------------------------------
+# Time-axis scaling helpers — keep multi-day (T up to 168h) plots readable
+# instead of cramming one tick/label per hour into a fixed-width figure.
+# ---------------------------------------------------------------------------
+
+def _time_axis_figwidth(T, base=13.0, min_width=13.0, max_width=34.0, per_hour=0.11):
+    """Figure width (inches) that grows with T but saturates for long horizons."""
+    return max(min_width, min(max_width, base + per_hour * max(0, T - 24)))
+
+
+def _hour_tick_step(T, max_ticks=28):
+    """Pick a 'nice' hour spacing so tick labels never overlap regardless of T."""
+    if T <= max_ticks:
+        return 1
+    for step in (2, 3, 4, 6, 8, 12, 24, 48, 72):
+        if -(-T // step) <= max_ticks:  # ceil division
+            return step
+    return 168
+
+
+def _set_hour_axis(ax, T, xlabel=None):
+    step = _hour_tick_step(T)
+    ticks = list(range(1, T + 1, step))
+    if ticks[-1] != T:
+        ticks.append(T)
+    ax.set_xticks(ticks)
+    ax.set_xlim(0.5, T + 0.5)
+    if T > 24:
+        ax.tick_params(axis="x", labelrotation=45)
+    if xlabel:
+        ax.set_xlabel(xlabel, fontsize=10)
+
+
+def _format_congested_hours(congested_hours, max_chars=60):
+    """Compact a possibly-long set of hours into ranges, wrapped to fit the figure."""
+    hours = sorted(congested_hours)
+    ranges = []
+    start = prev = hours[0]
+    for h in hours[1:]:
+        if h == prev + 1:
+            prev = h
+            continue
+        ranges.append(f"{start}" if start == prev else f"{start}-{prev}")
+        start = prev = h
+    ranges.append(f"{start}" if start == prev else f"{start}-{prev}")
+    text = f"Red shading = congested hour(s): {', '.join(ranges)}"
+    return "\n".join(textwrap.wrap(text, width=max_chars))
 
 
 # ---------------------------------------------------------------------------
@@ -511,7 +561,7 @@ def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteri
                   "#1f77b4", "#8c564b", "#bcbd22"]
     bat_colors = ["#9467bd", "#8c564b", "#17becf", "#e377c2", "#7f7f7f", "#bcbd22"]
 
-    fig, axes = plt.subplots(4, 1, figsize=(13, 11), sharex=True)
+    fig, axes = plt.subplots(4, 1, figsize=(_time_axis_figwidth(T), 11), sharex=True)
     fig.suptitle(f"{opt_name} Overview | T={T}h | {assets_file}", fontsize=13, y=0.98)
 
     congested_hours = {t + 1 for t, lines in enumerate(result.congested_lines) if lines}
@@ -581,21 +631,19 @@ def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteri
 
     # panel 4: hourly cost
     ax = axes[3]
-    ax.bar(hours, result.hourly_costs[:T], color="#7f7f7f", alpha=0.75, width=0.7)
+    ax.bar(hours, result.hourly_costs[:T], color="#7f7f7f", alpha=0.75, width=max(0.15, min(0.7, 60.0 / max(T, 1))))
     ax.set_ylabel("Cost ($)", fontsize=10)
-    ax.set_xlabel("Hour", fontsize=10)
     ax.set_title("Hourly Generation Cost", fontsize=10)
     ax.grid(axis="y", linestyle="--", alpha=0.35)
 
     if congested_hours:
         axes[0].annotate(
-            f"Red shading = congested hour(s): {sorted(congested_hours)}",
-            xy=(0.01, 0.97), xycoords="axes fraction",
-            fontsize=7.5, color="#cc0000", va="top",
+            _format_congested_hours(congested_hours),
+            xy=(0.99, 0.97), xycoords="axes fraction",
+            fontsize=7.5, color="#cc0000", va="top", ha="right",
         )
 
-    ax.set_xticks(hours)
-    ax.set_xlim(0.5, T + 0.5)
+    _set_hour_axis(ax, T, xlabel="Hour")
     plt.tight_layout(rect=[0, 0, 1, 0.97])
     filename = os.path.join(
         out_dir, f"{opt_name.lower()}_{T}h_{assets_file.replace('.py', '')}_overview.png"
@@ -622,21 +670,20 @@ def save_demand_plot(grid, out_dir=None):
 
     total = demand.sum(axis=0)
 
-    fig, ax = plt.subplots(figsize=(11, 5))
+    bar_width = max(0.15, min(0.8, 60.0 / max(T_d, 1)))
+    fig, ax = plt.subplots(figsize=(_time_axis_figwidth(T_d, base=11.0, min_width=11.0, max_width=32.0), 5))
     bottom = np.zeros(T_d)
     for idx, (label, color) in zip(bus_indices, zip(bus_labels, bus_colors)):
         if idx < demand.shape[0]:
             ax.bar(hours, demand[idx], bottom=bottom, label=label,
-                   color=color, alpha=0.75, width=0.8)
+                   color=color, alpha=0.75, width=bar_width)
             bottom += demand[idx]
 
     ax.plot(hours, total, color="black", linewidth=2, marker="o", markersize=4,
             label="Total demand")
-    ax.set_xlabel("Hour", fontsize=11)
     ax.set_ylabel("Demand (MW)", fontsize=11)
-    ax.set_title("24-Hour Demand Profile", fontsize=13, pad=12)
-    ax.set_xticks(hours)
-    ax.set_xlim(0.5, T_d + 0.5)
+    ax.set_title(f"{T_d}-Hour Demand Profile", fontsize=13, pad=12)
+    _set_hour_axis(ax, T_d, xlabel="Hour")
     ax.legend(loc="upper left", fontsize=9)
     ax.grid(axis="y", linestyle="--", alpha=0.4)
 
