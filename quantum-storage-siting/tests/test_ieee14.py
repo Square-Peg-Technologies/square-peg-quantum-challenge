@@ -13,13 +13,6 @@ import sys
 import numpy as np
 import pytest
 
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(__file__),
-        "..", "..", "..", "..", "Tutorial", "Quantum Network Flow Diagrams",
-    ),
-)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 _IEEE14_DIR = os.path.join(os.path.dirname(__file__), "..", "use_cases", "ieee14")

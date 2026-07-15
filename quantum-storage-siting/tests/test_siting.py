@@ -4,7 +4,6 @@ import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "Tutorial", "Quantum Network Flow Diagrams"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # Load pjm5 grid

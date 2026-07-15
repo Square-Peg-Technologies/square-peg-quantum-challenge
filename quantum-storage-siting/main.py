@@ -449,18 +449,6 @@ def save_overview(result, opt_name: str, T: int, assets_file: str,
 
 
 def main():
-    sys.path.insert(
-        0,
-        os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "..",
-            "..",
-            "Tutorial",
-            "Quantum Network Flow Diagrams",
-        ),
-    )
-
     opt = prompt_optimization()
     quantum_opts = None
     if opt == 4:

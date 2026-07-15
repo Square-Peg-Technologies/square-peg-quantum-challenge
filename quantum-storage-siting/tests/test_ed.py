@@ -11,14 +11,6 @@ import importlib.util
 import numpy as np
 import pytest
 
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(__file__),
-        "..", "..", "..", "..", "Tutorial", "Quantum Network Flow Diagrams",
-    ),
-)
-
 _pjm5_path = os.path.join(os.path.dirname(__file__), "..", "use_cases", "pjm5", "pjm5.py")
 _spec = importlib.util.spec_from_file_location("pjm5", _pjm5_path)
 _pjm5_mod = importlib.util.module_from_spec(_spec)

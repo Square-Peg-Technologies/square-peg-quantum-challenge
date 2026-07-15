@@ -22,11 +22,8 @@ import sys
 # ---------------------------------------------------------------------------
 _here = os.path.dirname(os.path.abspath(__file__))
 _pjm5_root = os.path.abspath(os.path.join(_here, "..", ".."))
-_tutorial = os.path.abspath(
-    os.path.join(_pjm5_root, "..", "..", "..", "Tutorial", "Quantum Network Flow Diagrams")
-)
 
-for p in [_tutorial, _pjm5_root, _here]:
+for p in [_pjm5_root, _here]:
     if p not in sys.path:
         sys.path.insert(0, p)
 

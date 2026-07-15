@@ -1,28 +1,193 @@
 # Quantum Storage Siting
 
+Square Peg Technologies — PQIC Challenge
+
+[<img src="https://qbraid-static.s3.amazonaws.com/logos/Launch_on_qBraid_white.png" width="150">](https://account.qbraid.com?gitHubUrl=https://github.com/Square-Peg-Technologies/square-peg-quantum-challenge.git)
+
 Hybrid quantum-classical solver for battery energy storage system (BESS) siting
-on power system test grids. Implements four levels of power system optimization —
-Economic Dispatch, Unit Commitment, Battery Siting, and Quantum Siting — all
-including battery storage dynamics.
+on power system test grids. Everything needed to install, run, and reproduce
+results is in this one document — setup and usage come first, background and
+results detail follow.
 
-Three use cases are included:
 
-- pjm5: PJM 5-bus system (MATPOWER case5). 5 buses, 6 lines, 3 generators,
-  2 batteries. 8 qubits for quantum siting.
-- ieee14: IEEE 14-bus system (MATPOWER case14) with a 200 MW AI datacenter load.
-  14 buses, 20 branches, 5 generators, 4 batteries. 19 qubits for quantum siting.
-- ieee30: IEEE 30-bus system (MATPOWER case30). 30 buses, 41 branches,
-  6 generators (335 MW total). 36 qubits for quantum siting.
+## Setup
 
-Each case's daily demand shape repeats over a full week (168 hours); any
-horizon from 1 up to 168 hours can be requested (battery SoC free-floats
-continuously, with no reset between days).
+Python 3.11.12 pinned via pyenv:
 
-Based on the IonQ/ORNL hybrid quantum-classical algorithm (arXiv:2505.00145,
-Formulation/IonQ_ORNL_Unit_Commitment_2505.00145.pdf).
+    pyenv local 3.11.12
+    /home/<user>/.pyenv/versions/3.11.12/bin/python -m venv .venv
+    .venv/bin/pip install -r requirements.txt
+    .venv/bin/pip install -r requirements-gpu.txt  # GPU only, requires CUDA 12
+
+Always activate the venv or use `.venv/bin/python` explicitly — never system python.
+
+All dependencies are contained in this repo. There is no external setup step:
+the grid-topology base classes formerly pulled from a separate local project
+(via a `.pth` file pointing outside the repo) are now vendored in-repo at
+`dcopf/` — nothing to install or path-hack, `pip install -r requirements.txt`
+is the whole story.
+
+
+## Running the Tool
+
+Two ways to run: the browser dashboard (recommended) or the interactive CLI.
+
+### Dashboard (Browser UI)
+
+    .venv/bin/python dashboard.py
+
+then open http://127.0.0.1:7860. Stop the server with Ctrl-C. Note the server
+does not hot-reload: after pulling code changes, restart it.
+
+One tab per problem, each with a compact control bar of inputs on top and
+results below in sub-tabs:
+
+    Economic Dispatch     use case, assets, hours T
+    Unit Commitment       use case, assets, hours T
+    Battery Siting (MIP)  + time limit (s)
+    Quantum Siting        + backend, candidates, 2nd stage, warm start
+    Power Flow            per-candidate network diagrams (read-only gallery)
+
+Sub-tabs per problem: Results (quantum only — candidate ranking table),
+Plots (all of the run's plots side by side, scaled to fit the window),
+Runtime (quantum only — phase breakdown chart), and Terminal — the exact
+CLI output including full tracebacks, with a copy button for easy debugging.
+
+The quantum backend dropdown exposes all three backends: Qiskit (GPU),
+Qiskit (CPU), Aer Tensor Network (MPS), and D-Wave SA. Selecting GPU on a
+machine without one shows a dismissible error popup and nothing runs; any
+mid-run failure pops a warning toast and the traceback lands in the Terminal
+sub-tab.
+
+Result caching — every run is recorded with its exact input settings.
+Clicking Run with settings that were already run loads the stored results
+instantly ("✅ Already run — loaded from <timestamp>") instead of re-solving.
+Tick "Re-run even if cached" to force a fresh solve. Plots are snapshotted
+per-run, so cached runs keep showing the correct images even after later runs
+overwrite the shared filenames in `outputs/`.
+
+Run history — a strip at the bottom of every problem tab lists all past runs
+(any problem, newest first) and survives restarts.
+
+Power Flow tab — after a Quantum Siting run, shows one network diagram per
+evaluated candidate placement, ranked by true cost — committed/off
+generators, battery buses, and per-line max loading (orange ≥70%, red ≥90%).
+
+Comparing classical vs quantum — Battery Siting (MIP) and Quantum Siting
+solve the same problem; the quantum tab generates the same grid +
+dispatch-overview plots for its best placement (saved as `quantum_*.png` vs
+`siting_*.png` so neither overwrites the other).
+
+Files written by the dashboard:
+
+    outputs/dashboard_settings.json   last-used inputs per tab (restored on launch)
+    outputs/dashboard_history.json    run history index (cache keys, summaries)
+    outputs/dashboard_runs/           per-run terminal logs + plot snapshots
+    outputs/powerflow/                latest quantum run's candidate diagrams
+
+### CLI
+
+    .venv/bin/python main.py
+
+Prompt flow — Step 1, choose the optimization:
+
+    1. Economic Dispatch (ED)
+    2. Unit Commitment (UC)
+    3. Battery Siting (exhaustive search)
+    4. Quantum Siting (Hybrid VQA + Classical)
+
+For option 4 only, additional sub-prompts:
+
+    Select quantum backend:
+      1. Qiskit (VQA, statevector simulator)
+      2. D-Wave (Simulated Annealing)
+      3. Aer Tensor Network (VQA, MPS — scales to 36+ qubits)
+
+    How many candidates to evaluate classically? [default: 10]:
+
+    Second-stage solver:
+      1. ED dispatch (fix commitment and placement)
+      2. Full UC re-solve (fix placement only)
+
+    Warm-start strategy (Qiskit and Aer TN backends only):
+      1. zeros  — theta=0, paper simulation default [default]
+      2. random — theta~Uniform[-2pi,2pi], paper IonQ hardware default
+      3. sdp    — LP-relaxation warm start, paper Section III
+
+Step 2 — use case (ieee14 / ieee30 / pjm5). Step 3 — assets file (scanned
+from the use case directory, e.g. `assets_dc_bus4.py`). Step 4 — hours,
+bounded by the loaded case's actual demand profile (all three use cases
+build a one-week, 168-hour profile, so the prompt's max scales to whatever
+the case supports):
+
+    How many hours to simulate? (1-168):
+
+Example output (Quantum Siting, ieee14, T=24h, `assets_dc_bus4.py`):
+
+    Running Quantum Siting optimization for T=24 hours...
+    Aer: GPU detected — using GPU statevector
+
+    Quantum Siting Results (Qiskit VQA + UC refinement)
+    Quantum candidates found:   10
+    Candidates evaluated:       10
+    Runtime — quantum sieve:    145.6s
+    Runtime — classical stage:  10.1s
+
+    Best placement: buses (2, 4, 6, 7), cost $199,804
+
+    Rank   Bat Placement           True Cost ($)
+    --------------------------------------------
+    1      (2, 4, 6, 7)                 199,804
+    ...
+
+### Quality Gate
+
+    .venv/bin/ruff check main.py solvers/ tests/ plots.py
+    .venv/bin/mypy main.py solvers/ --ignore-missing-imports
+    .venv/bin/pytest tests/ -m "not slow" -v
+    .venv/bin/pytest tests/ -m slow -v        # Qiskit VQA path (~30s)
+
+
+## Repo Layout
+
+    main.py                 Entry point. Interactive CLI, dispatches to solvers.
+    dashboard.py             Gradio browser dashboard.
+    plots.py                 Network visualization + runtime breakdown charts (PNG per run).
+    requirements.txt         Python dependencies, CPU-only (includes gradio for the dashboard).
+    requirements-gpu.txt     Optional GPU extras: qiskit-aer-gpu + cuQuantum/CUDA wheels.
+
+    dcopf/                   Vendored grid-topology base classes (BaseCase, BaseCaseDescription)
+                              — PTDF/Btilde construction from MATPOWER-style case data.
+                              Self-contained, numpy-only, no external project dependency.
+
+    use_cases/
+        pjm5/                 PJM 5-bus grid: 5 buses, 6 branches, 3 generators, 2 batteries.
+        ieee14/                IEEE 14-bus grid: 14 buses, 20 branches, 5 generators, 4 batteries,
+                              optional 200 MW AI datacenter load (assets_dc_bus{N}.py).
+        ieee30/                IEEE 30-bus grid: 30 buses, 6 generators (335 MW total).
+
+    solvers/
+        results.py            EDResult, UCResult, SitingResult, QuantumSitingResult.
+        ed.py                  Economic Dispatch (QP, HiGHS).
+        uc.py                  Unit Commitment (MIQP, SCIP). Generic — works for any grid size.
+        siting.py              Exhaustive battery siting loop.
+        quantum_siting.py      VQA/SA sieve + classical refinement + debug logger.
+
+    tests/                   Unit + integration tests (see Quality Gate above).
+
+    Formulation/
+        Siting_Formulation.pdf/.tex   Problem formulation document + LaTeX source.
+        IonQ_ORNL_Unit_Commitment_2505.00145.pdf   Reference paper (Aboumrad et al., 2025).
+        QUANTUM_FLOW.md         Quantum algorithm flow description.
+        Test_Quantum_examples/  IonQ paper benchmark scripts.
+
+    outputs/                 Generated plots and debug logs (gitignored).
+    Constitution/             Internal planning docs (gitignored).
 
 
 ## What It Does
+
+Four levels of power system optimization, all including battery storage dynamics:
 
 1. Economic Dispatch (ED): All generators stay on. Finds least-cost dispatch
    each hour subject to line flow limits and battery SoC dynamics. Solved as
@@ -49,6 +214,9 @@ Formulation/IonQ_ORNL_Unit_Commitment_2505.00145.pdf).
      SimulatedAnnealingSampler. No QPU connection required.
 
 All modes use a DC power flow approximation (lossless branches, no reactive power).
+
+Based on the IonQ/ORNL hybrid quantum-classical algorithm (arXiv:2505.00145,
+`Formulation/IonQ_ORNL_Unit_Commitment_2505.00145.pdf`).
 
 
 ## Use Cases
@@ -93,7 +261,8 @@ D-Wave SA matches classical optimum exactly (0% gap) in under 1 second.
 IEEE 14-bus test system (American Electric Power, 1962, MATPOWER case14).
 Includes a synthetic 200 MW AI datacenter load added at a chosen bus.
 
-Network topology (text diagram):
+Network topology (text diagram — see `Formulation/Problem Formulation.png`
+for a rendered version):
 
     Bus 1 (Gen 1, DC load) ---[1-2]--- Bus 2 (Gen 2)
      |         \                        |       \
@@ -152,39 +321,39 @@ one of Gen 3/4/5.
 Batteries: 4 × 50 MW / 200 MWh, 90% efficiency, initial SoC 100%.
 Quantum siting: 5 gen + 14 bus = 19 qubits, C(14,4) = 1,001 placements.
 
-Datacenter bus selection: buses 3 and 6-14 are infeasible (line limits violated).
-Feasible buses ranked by total 24h ED cost:
-
-    Rank    Bus    24h Cost ($)    Congestion    Notes
-    ----    ---    ------------    ----------    -----
-    1        1       228,429       None          Co-located with Gen 1 swing bus; no line binding
-    2        2       228,429       None          Near Gen 2; no line binding
-    3        4       231,178       Yes           Binds lines 1-5 and 2-4 at peak hours
-    4        5       234,906       Yes           Binds line 1-5 at peak hours
-
-IMPORTANT — for meaningful congestion and a non-trivial P_loc(s) battery signal,
-use assets_dc_bus4.py or assets_dc_bus5.py. With the datacenter at bus 1 or bus 2
-the network is uncongested: all buses price identically and the P_loc term
-contributes zero to the proxy cost. Bus 4 and bus 5 force the optimizer to route
-power through tight transformers and mid-network lines, creating spatial LMP
-differentiation and a meaningful congestion relief signal for battery siting.
-
-Run site_datacenter.py to regenerate these rankings after any change to
-line limits or datacenter size:
+Datacenter bus selection: buses 6-14 are infeasible (line limits violated).
+Run `site_datacenter.py` to regenerate feasibility/cost rankings after any
+change to line limits or datacenter size:
 
     cd use_cases/ieee14 && python site_datacenter.py
+
+NOTE: the last regenerated ranking (T=24h) gives buses 1, 2, 3, and 4 an
+identical $228,429 cost and bus 5 at $228,755 — this has drifted from an
+older documented ranking that showed bus 4 and bus 5 as distinctly more
+expensive with bus 3 infeasible. That older ranking predates the one-week
+demand-horizon extension; it has not been root-caused yet and needs
+re-verifying against the current case data before being treated as
+authoritative. Re-run the script above and use its live output, not this note.
+
+IMPORTANT — for meaningful congestion and a non-trivial P_loc(s) battery signal,
+use `assets_dc_bus4.py` or `assets_dc_bus5.py`. With the datacenter at bus 1 or
+bus 2 the network is uncongested: all buses price identically and the P_loc
+term contributes zero to the proxy cost. Bus 4 and bus 5 force the optimizer
+to route power through tight transformers and mid-network lines, creating
+spatial LMP differentiation and a meaningful congestion relief signal for
+battery siting.
 
 Confirmed quantum siting result (Qiskit VQA + UC, T=24h, n=10):
 Best placement buses (2, 4, 6, 7), cost $199,804 in ~2.5 min on GPU.
 
 ### LMP and Shadow Price Extraction
 
-use_cases/ieee14/extract_lmps.py runs a no-battery DC-OPF on ieee14 and extracts
-LMPs and shadow prices for analysis:
+`use_cases/ieee14/extract_lmps.py` runs a no-battery DC-OPF on ieee14 and
+extracts LMPs and shadow prices for analysis:
 
     .venv/bin/python use_cases/ieee14/extract_lmps.py
 
-Outputs to outputs/ (created automatically):
+Outputs to `outputs/` (created automatically):
 
     lmps_14x24.csv           LMP at each bus for each of the 24 hours (14 × 24)
     shadow_prices_20x24.csv  Shadow price on each line for each hour (20 × 24)
@@ -195,188 +364,12 @@ the congestion components — a bus with high PTDF exposure to a binding line ha
 high congestion relief value for battery placement.
 
 The quantum solver computes these internally at runtime (see P_loc below).
-extract_lmps.py is a standalone diagnostic tool for inspection and for sharing
-data with external tools (e.g. PLEXOS baseline comparison).
+`extract_lmps.py` is a standalone diagnostic tool for inspection and for
+sharing data with external tools (e.g. PLEXOS baseline comparison).
 
 Note: with the datacenter at bus 1 or bus 2 no lines bind and all shadow prices
-are zero — extract_lmps.py will show uniform LMPs and an empty binding-lines list.
-Use assets_dc_bus4.py or assets_dc_bus5.py for non-trivial output.
-
-
-## Running the Tool
-
-Two ways to run: the browser dashboard (recommended) or the interactive CLI.
-
-## Dashboard (Browser UI)
-
-A Gradio web dashboard wraps the same solvers as main.py for browser-based runs —
-no terminal interaction needed once it is launched.
-
-Set up the environment first if you haven't already:
-
-    pyenv local 3.11.12
-    python -m venv .venv
-    .venv/bin/pip install -r requirements.txt
-    .venv/bin/pip install -r requirements-gpu.txt   # GPU machines only (CUDA 12)
-
-Launch:
-
-    .venv/bin/python dashboard.py
-
-then open http://127.0.0.1:7860. Stop the server with Ctrl-C. Note the server
-does not hot-reload: after pulling code changes, restart it.
-
-### Layout
-
-One tab per problem, each with a compact control bar of inputs on top and
-results below in sub-tabs:
-
-    Economic Dispatch     use case, assets, hours T
-    Unit Commitment       use case, assets, hours T
-    Battery Siting (MIP)  + time limit (s)
-    Quantum Siting        + backend, candidates, 2nd stage, warm start
-    Power Flow            per-candidate network diagrams (read-only gallery)
-
-Sub-tabs per problem: Results (quantum only — candidate ranking table),
-Plots (all of the run's plots side by side, scaled to fit the window),
-Runtime (quantum only — phase breakdown chart), and Terminal — the exact
-CLI output including full tracebacks, with a copy button for easy debugging.
-
-The quantum backend dropdown exposes all three backends: Qiskit (GPU),
-Qiskit (CPU), Aer Tensor Network (MPS), and D-Wave SA. Selecting GPU on a
-machine without one shows a dismissible error popup and nothing runs; any
-mid-run failure pops a warning toast and the traceback lands in the Terminal
-sub-tab.
-
-### Result caching — runs are never repeated by accident
-
-Every run is recorded with its exact input settings. Clicking Run with settings
-that were already run loads the stored results instantly (summary banner says
-"✅ Already run — loaded from <timestamp>") instead of re-solving. Tick the
-"Re-run even if cached" checkbox next to the Run button to force a fresh solve.
-On page load each tab is pre-seeded with the cached results for your last-used
-settings.
-
-Plots are snapshotted into a per-run folder at record time, so cached runs keep
-showing the correct images even after later runs overwrite the shared filenames
-in outputs/.
-
-### Run history
-
-A history strip at the bottom of every problem tab lists all past runs (any
-problem, newest first). Clicking a row reloads that run's plots and terminal
-log into a viewer below the table. History survives restarts.
-
-### Power Flow tab
-
-After a Quantum Siting run, this tab shows one network diagram per evaluated
-candidate placement, ranked by true cost — committed/off generators, battery
-buses, and per-line max loading (orange ≥70%, red ≥90%). The gallery reflects
-the latest quantum run; "Reload from disk" restores it after a server restart.
-
-### Comparing classical vs quantum
-
-Battery Siting (MIP) and Quantum Siting solve the same problem, and the quantum
-tab generates the same grid + dispatch-overview plots for its best placement
-(saved as quantum_*.png vs siting_*.png so neither overwrites the other). The
-quantum Runtime chart is tagged with the backend, so Qiskit (GPU) vs (CPU)
-timing comparisons keep separate charts.
-
-### Files written by the dashboard
-
-    outputs/dashboard_settings.json   last-used inputs per tab (restored on launch)
-    outputs/dashboard_history.json    run history index (cache keys, summaries)
-    outputs/dashboard_runs/           per-run terminal logs + plot snapshots
-    outputs/powerflow/                latest quantum run's candidate diagrams
-
-
-## CLI
-
-Always use the venv Python:
-
-    source .venv/bin/activate
-    python main.py
-
-Or without activating:
-
-    .venv/bin/python main.py
-
-### Prompt Flow
-
-Step 1 — optimization:
-
-    1. Economic Dispatch (ED)
-    2. Unit Commitment (UC)
-    3. Battery Siting (exhaustive search)
-    4. Quantum Siting (Hybrid VQA + Classical)
-
-For option 4 only, additional sub-prompts:
-
-    Select quantum backend:
-      1. Qiskit (VQA, statevector simulator)
-      2. D-Wave (Simulated Annealing)
-      3. Aer Tensor Network (VQA, MPS — scales to 36+ qubits)
-
-    How many candidates to evaluate classically? [default: 10]:
-
-    Second-stage solver:
-      1. ED dispatch (fix commitment and placement)
-      2. Full UC re-solve (fix placement only)
-
-    Warm-start strategy (Qiskit and Aer TN backends only):
-      1. zeros  — theta=0, paper simulation default [default]
-      2. random — theta~Uniform[-2pi,2pi], paper IonQ hardware default
-      3. sdp    — LP-relaxation warm start, paper Section III
-
-Step 2 — use case:
-
-    Available use cases:
-      1. ieee14
-      2. ieee30
-      3. pjm5
-
-Step 3 — assets file (scanned from the use case directory):
-
-    Available assets files:
-      1. assets.py
-      2. assets_dc_bus1.py
-      ...
-
-Step 4 — hours (bounded by the loaded case's actual demand profile). All
-three use cases now build a one-week, 168-hour profile with the daily shape
-repeating 7x, so the prompt's max scales to whatever the selected case
-supports:
-
-    How many hours to simulate? (1-168):
-
-### Example Output (Quantum Siting, ieee14, T=24h)
-
-Use assets_dc_bus4.py or assets_dc_bus5.py to get a non-trivial P_loc signal.
-
-    =============================================
-    Run: Quantum Siting | Hours: 24 | Use case: ieee14 | Assets: assets_dc_bus4.py
-    Datacenter: 200 MW flat load injected at Bus 4
-    Generators: {Gen 1 (Bus 1, 50.0-332.0 MW, b=$20.0)}
-                {Gen 2 (Bus 2, 20.0-140.0 MW, b=$20.0)}
-                ...
-    Batteries:  {Bat 0 (50.0 MW / 200.0 MWh)}, ...
-    =============================================
-
-    Running Quantum Siting optimization for T=24 hours...
-    Aer: GPU detected — using GPU statevector
-
-    Quantum Siting Results (Qiskit VQA + UC refinement)
-    Quantum candidates found:   10
-    Candidates evaluated:       10
-    Runtime — quantum sieve:    145.6s
-    Runtime — classical stage:  10.1s
-
-    Best placement: buses (2, 4, 6, 7), cost $199,804
-
-    Rank   Bat Placement           True Cost ($)
-    --------------------------------------------
-    1      (2, 4, 6, 7)                 199,804
-    ...
+are zero — `extract_lmps.py` will show uniform LMPs and an empty binding-lines
+list. Use `assets_dc_bus4.py` or `assets_dc_bus5.py` for non-trivial output.
 
 
 ## Quantum Siting — How It Works
@@ -461,8 +454,8 @@ Classical second stage:
              Candidates sharing the same battery placement are deduplicated
              (one UC solve per unique placement).
 
-Debug log: every run writes outputs/quantum_siting_debug.log with all candidate
-pass/fail outcomes and error messages for post-run diagnosis.
+Debug log: every run writes `outputs/quantum_siting_debug.log` with all
+candidate pass/fail outcomes and error messages for post-run diagnosis.
 
 
 ## CPU vs GPU Support
@@ -485,7 +478,7 @@ ieee14-sized problems.
     .venv/bin/pip install -r requirements.txt
     .venv/bin/pip install -r requirements-gpu.txt
 
-requirements-gpu.txt installs qiskit-aer-gpu plus the cuQuantum/CUDA wheels.
+`requirements-gpu.txt` installs qiskit-aer-gpu plus the cuQuantum/CUDA wheels.
 qiskit-aer-gpu replaces the CPU qiskit-aer in place (same import name), so
 install it second. Requires an NVIDIA GPU with CUDA 12.
 
@@ -507,76 +500,13 @@ even on a GPU machine (useful for timing comparisons — the runtime breakdown
 chart is tagged with the backend so GPU and CPU charts coexist). Picking GPU
 on a machine without one shows an error popup and nothing runs.
 
-Programmatic: run_quantum_siting(..., device="auto" | "GPU" | "CPU").
+Programmatic: `run_quantum_siting(..., device="auto" | "GPU" | "CPU")`.
 
 At 19 qubits (ieee14): 2¹⁹ × 4 bytes = 2 MB statevector — trivial for any
 modern GPU. A typical consumer GPU runs the full VQA in ~2.5 minutes.
 
 Always source the venv before running to ensure the venv's Qiskit build is
 used rather than any system-level installation.
-
-
-## File Structure
-
-    main.py                 Entry point. Interactive CLI, dispatches to solvers.
-    dashboard.py            Gradio browser dashboard (see "Dashboard (Browser UI)").
-    plots.py                Network visualization + runtime breakdown charts (PNG per run).
-    requirements.txt        Python dependencies, CPU-only (includes gradio for the dashboard).
-    requirements-gpu.txt    Optional GPU extras: qiskit-aer-gpu + cuQuantum/CUDA wheels.
-
-    use_cases/
-        pjm5/
-            pjm5.py             PJM 5-bus grid: 5 buses, 6 branches, 3 generators.
-            assets.py           3 generators, 2 batteries.
-            locations.py        Default bus assignments for ED/UC.
-
-        ieee14/
-            ieee14.py           IEEE 14-bus grid: 14 buses, 20 branches, 5 generators.
-            assets.py           5 generators, 4 batteries, no datacenter (base template).
-            assets_dc_bus1.py   Datacenter at bus 1, 200 MW. No congestion — P_loc is zero.
-            assets_dc_bus2.py   Datacenter at bus 2, 200 MW. No congestion — P_loc is zero.
-            assets_dc_bus4.py   Datacenter at bus 4, 200 MW. Congested — use for P_loc signal.
-            assets_dc_bus5.py   Datacenter at bus 5, 200 MW. Congested — use for P_loc signal.
-            locations.py        Fixed generator locations; placeholder battery locations.
-            site_datacenter.py  Sweeps all 14 buses, ranks by ED cost, writes assets files.
-            extract_lmps.py     Standalone diagnostic: exports LMPs and shadow prices to CSV.
-
-        ieee30/
-            ieee30.py           IEEE 30-bus grid: 30 buses, 6 generators (335 MW total).
-            assets.py           6 generators, batteries.
-            locations.py        Generator and battery bus assignments.
-            case30.m            MATPOWER source data.
-
-    solvers/
-        results.py          EDResult, UCResult, SitingResult, QuantumSitingResult.
-        ed.py               Economic Dispatch (QP, HiGHS).
-        uc.py               Unit Commitment (MIQP, SCIP). Generic — works for any grid size.
-        siting.py           Exhaustive battery siting loop.
-        quantum_siting.py   VQA/SA sieve + classical refinement + debug logger.
-                            Key functions:
-                              _compute_shadow_prices  — no-battery DC-OPF to get line duals
-                              compute_congestion_signal — PTDF × shadow-price per-bus signal
-                              build_proxy_cost_fn     — proxy Q(u,s) including P_loc term
-                              build_bqm               — D-Wave QUBO including P_loc bias
-                              run_quantum_siting      — top-level pipeline orchestrator
-
-    tests/
-        test_ed.py              ED feasibility, power balance, generator limits, SoC.
-        test_uc.py              UC commitment logic, p_min/p_max, power balance.
-        test_siting.py          Siting: all combinations returned, sorted by cost.
-        test_cli.py             Input validation: all prompts, bad-input rejection.
-        test_quantum_siting.py  Proxy cost, BQM structure, ansatz shape, Qiskit VQA.
-
-    Formulation/
-        Siting_Formulation.pdf              Problem formulation document.
-        Siting_Formulation.tex              LaTeX source.
-        IonQ_ORNL_Unit_Commitment_2505.00145.pdf   Reference paper (Aboumrad et al., 2025).
-        QUANTUM_FLOW.md                     Quantum algorithm flow description.
-        Problem Formulation.png             Diagram.
-        Test_Quantum_examples/              IonQ paper benchmark scripts.
-
-    outputs/                    Generated plots and debug logs (gitignored).
-    Constitution/               Internal planning docs (gitignored).
 
 
 ## Solver Performance
@@ -597,36 +527,39 @@ stage/ED/UC timings to scale roughly 7x at T=168, since the quantum sieve
 itself does not depend on T.
 
 
-## Environment Setup
+## Limitations
 
-Python 3.11.12 pinned via pyenv:
-
-    pyenv local 3.11.12
-    /home/<user>/.pyenv/versions/3.11.12/bin/python -m venv .venv
-    .venv/bin/pip install -r requirements.txt
-    .venv/bin/pip install -r requirements-gpu.txt  # GPU only, requires CUDA 12
-
-Always activate the venv or use .venv/bin/python explicitly — never system python.
-
-The dcopf package (used by pjm5.py) requires a .pth file:
-
-    echo "<repo-root>/Tutorial/Quantum Network Flow Diagrams" \
-      > .venv/lib/python3.11/site-packages/dcopf_local.pth
-
-
-## Quality Gate
-
-    .venv/bin/ruff check main.py solvers/ tests/ plots.py
-    .venv/bin/mypy main.py solvers/ --ignore-missing-imports
-    .venv/bin/pytest tests/ -m "not slow" -v
-    .venv/bin/pytest tests/ -m slow -v        # Qiskit VQA path (~30s)
+- DC power flow approximation only: lossless branches, no reactive power,
+  no voltage magnitude/angle constraints. Line losses are a known, deliberately
+  scoped-out gap (see repo TODO) — Plexos comparisons use resistance-based
+  losses, this model does not.
+- The quantum sieve is a proxy-cost pre-filter, not an end-to-end quantum
+  optimizer: it narrows the search space analytically, then a classical
+  UC/ED solve picks the winner. The quantum step's role is candidate
+  generation/ranking, not final feasibility or cost evaluation.
+- All "quantum" runs are simulated (statevector, tensor-network MPS, or
+  classical simulated annealing) — no results here were produced on physical
+  QPU hardware. Qiskit VQA is compatible with IonQ Forte gate hardware but has
+  not yet been run there.
+- ieee30 quantum siting currently has no confirmed Qiskit VQA benchmark
+  (Solver Performance table above shows "—" for that cell) — only the Aer
+  Tensor Network and classical paths have been timed at that scale. It runs
+  but is unverified end-to-end and is not exercised by the fast test suite.
+- Battery siting assumes exactly one battery per node (no co-located
+  batteries) and a fixed battery count/spec per use case — battery sizing is
+  not itself an optimization variable.
+- The IEEE14 datacenter-bus cost ranking in this README currently has a
+  documented discrepancy versus the code's live output (see the NOTE under
+  IEEE 14-Bus above) that has not yet been root-caused.
+- Contingency (generator trip) and weather-scaling scenarios referenced in
+  the Phase 3 paper are not yet implemented in this codebase.
 
 
 ## References
 
 Aboumrad et al., "A New Hybrid Quantum-Classical Algorithm for Solving the Unit
 Commitment Problem," arXiv:2505.00145, IonQ/ORNL, 2025.
-PDF: Formulation/IonQ_ORNL_Unit_Commitment_2505.00145.pdf
+PDF: `Formulation/IonQ_ORNL_Unit_Commitment_2505.00145.pdf`
 
 Zimmermann et al., "MATPOWER: Steady-State Operations, Planning, and Analysis
 Tools for Power Systems Research and Education," IEEE Transactions on Power
