@@ -2,6 +2,21 @@
 # Select this file for baseline (no DC) studies.
 # For datacenter scenarios, run site_datacenter.py then select the generated
 # assets_dc_bus{N}.py file from this directory.
+#
+# p_min stays nonzero here (unlike ieee14_plexos_basecase/assets.py, which
+# uses p_min=0 to match Andrew's PLEXOS baseline). solvers/quantum_siting.py's
+# proxy cost function approximates each generator's commitment cost as
+# cost_a*p_min^2 + cost_b*p_min + cost_c; with cost_a=cost_c=0 here, that
+# collapses to cost_b*p_min, which goes to zero at p_min=0 regardless of
+# cost_b — the proxy (and its lambda1/lambda2 penalty scaling) can no longer
+# tell a $20/MWh generator from a $40/MWh one, breaking Quantum Siting's
+# classical-sieve stage. ED/UC/Battery-Siting-MIP/Benders all dispatch
+# continuous p[g,t] against the real cost curve and handle p_min=0 fine —
+# only this file's use in the Quantum Siting tab is the reason p_min isn't
+# zeroed here too. The 50/20 MW floor values themselves have no documented
+# source (MATPOWER case14 has no real Pmin for these units — buses 3, 6, 8
+# are synchronous condensers, Pg=0, in the original data; the team gave them
+# p_max=100 MW to act as real generators, and p_min was an arbitrary floor).
 
 GENERATORS = [
     {

@@ -1,12 +1,12 @@
 # PLEXOS base-case replication assets.
 #
 # p_min = 0 on every generator (not the usual 20 MW floor used elsewhere in
-# ieee14/assets.py). PLEXOS's own "Generation by Hour" output shows Gen 3
-# and Gen 4 sitting at exactly 0 MW whenever unused, and Gen 5 running
-# fractional values like 1.88 / 3.8 / 7.62 MW — all below a 20 MW floor —
-# so his base case appears to run with no minimum-stable-level constraint.
-# This is reverse-engineered from his output, not confirmed by him directly;
-# see the open question in docs/plexos_comparison/Comparison_Summary.md.
+# ieee14/assets.py). Originally reverse-engineered from PLEXOS's "Generation
+# by Hour" output — Gen 3 and Gen 4 sitting at exactly 0 MW whenever unused,
+# and Gen 5 running fractional values like 1.88 / 3.8 / 7.62 MW, all below a
+# 20 MW floor — and confirmed directly by Andrew: his PLEXOS baseline runs
+# with no minimum-stable-level constraint, and he's noted that dropping
+# p_min lets the model show more congestion.
 #
 # No batteries ("No Batteries" case) — represented as a single zero-power,
 # zero-capacity dummy so the solver's battery arrays aren't empty.
