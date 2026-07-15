@@ -17,6 +17,7 @@ outputs/dashboard_runs/ and indexed in outputs/dashboard_history.json.
 from __future__ import annotations
 
 import contextlib
+import copy
 import glob
 import io
 import json
@@ -208,6 +209,26 @@ def _on_use_case_change(use_case: str):
 # Shared run plumbing
 # ---------------------------------------------------------------------------
 
+_base_grid_cache: dict[str, object] = {}
+
+
+def _base_grid(use_case: str, grid_mod) -> object:
+    """Construct grid_mod.Case() once per use case and reuse it thereafter.
+
+    Each tab's control bar and every run call _load_case for the same
+    use case, and Case() construction prints and does real work (PTDF
+    build), so without caching it re-runs on every tab load and every run.
+    Returns a shallow copy with its own power_demand array so callers can
+    inject the datacenter load without mutating the cached base.
+    """
+    if use_case not in _base_grid_cache:
+        _base_grid_cache[use_case] = grid_mod.Case()
+    base = _base_grid_cache[use_case]
+    grid = copy.copy(base)
+    grid.power_demand = np.array(base.power_demand, copy=True)
+    return grid
+
+
 def _load_case(use_case: str, assets_file: str):
     """Load grid/assets/locations and inject the datacenter load (mirrors main.main)."""
     use_case_path = os.path.join(BASE_DIR, "use_cases", use_case)
@@ -215,7 +236,7 @@ def _load_case(use_case: str, assets_file: str):
     assets_file_name, grid_mod, assets_mod, loc_mod = cli.load_modules(
         use_case, use_case_path, assets_path
     )
-    grid = grid_mod.Case()
+    grid = _base_grid(use_case, grid_mod)
     dc_bus = getattr(assets_mod, "DATACENTER_BUS", None)
     dc_mw = float(getattr(assets_mod, "DATACENTER_MW", 0))
     if dc_bus is not None and dc_mw > 0:
