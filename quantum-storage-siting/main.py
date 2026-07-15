@@ -4,7 +4,30 @@ import os
 import sys
 import time
 
+import numpy as np
+
 from solvers.results import UCResult, SitingResult, SitingMIPResult, QuantumSitingResult
+
+FULL_WEEK_HOURS = 168
+
+
+def extend_to_full_week(grid, hours: int = FULL_WEEK_HOURS) -> None:
+    """Cyclically repeat a case's demand/cost profile out to `hours` columns.
+
+    Some use cases (e.g. ieee14_plexos_basecase, a single-day PLEXOS
+    replication) only define one day of data. Tiling that pattern here,
+    generically, means every use case's hour slider/prompt can reach a
+    full week without each case author hand-rolling a DAYS=7 repeat loop
+    themselves — new use cases get this for free. Cases that already
+    define >= `hours` columns (e.g. ieee14/pjm5/ieee30, already extended
+    to 168h) are left untouched.
+    """
+    n_native = grid.power_demand.shape[1]
+    if n_native >= hours:
+        return
+    reps = -(-hours // n_native)  # ceil division
+    grid.power_demand = np.tile(grid.power_demand, reps)[:, :hours]
+    grid.generator_cost = np.tile(grid.generator_cost, reps)[:, :hours]
 
 
 def prompt_optimization() -> int:
@@ -457,6 +480,7 @@ def main():
     assets_file_name, grid_mod, assets_mod, loc_mod = load_use_case(use_case_name, use_case_path)
 
     grid = grid_mod.Case()
+    extend_to_full_week(grid)
 
     # Bound the hours prompt by how many hours of demand data this case
     # actually has (e.g. ieee14 has a week/168h; other cases may still be 24h).

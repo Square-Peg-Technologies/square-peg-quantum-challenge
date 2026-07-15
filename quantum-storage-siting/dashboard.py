@@ -222,7 +222,9 @@ def _base_grid(use_case: str, grid_mod) -> object:
     inject the datacenter load without mutating the cached base.
     """
     if use_case not in _base_grid_cache:
-        _base_grid_cache[use_case] = grid_mod.Case()
+        grid0 = grid_mod.Case()
+        cli.extend_to_full_week(grid0)
+        _base_grid_cache[use_case] = grid0
     base = _base_grid_cache[use_case]
     grid = copy.copy(base)
     grid.power_demand = np.array(base.power_demand, copy=True)
