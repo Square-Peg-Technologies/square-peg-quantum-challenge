@@ -86,6 +86,11 @@ def _build_master(batteries: list, n_bus: int):
         master.addCons(quicksum(x[b, n] for n in range(n_bus)) == 1,
                        name=f"one_bus_{b}")
 
+    # At most one battery per bus (one-battery-per-node assumption, matches Plexos).
+    for n in range(n_bus):
+        master.addCons(quicksum(x[b, n] for b in range(n_bat)) <= 1,
+                       name=f"one_bat_{n}")
+
     for b in range(n_bat):
         master.addConsSOS1([x[b, n] for n in range(n_bus)])
 

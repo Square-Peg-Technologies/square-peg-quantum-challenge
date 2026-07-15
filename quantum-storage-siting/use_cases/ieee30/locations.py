@@ -11,11 +11,11 @@ GENERATOR_LOCATIONS = {
     5: 13,  # Gen 6 at bus 13
 }
 
-# Placeholder: all 4 batteries start at bus 1.
-# run_siting and run_quantum_siting will override these with optimised locations.
+# Placeholder: one battery per bus (1-4). run_siting and run_quantum_siting
+# will override these with optimised locations.
 BATTERY_LOCATIONS = {
     0: 1,
-    1: 1,
-    2: 1,
-    3: 1,
+    1: 2,
+    2: 3,
+    3: 4,
 }

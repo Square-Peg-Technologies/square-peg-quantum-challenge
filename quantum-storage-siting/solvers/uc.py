@@ -25,6 +25,12 @@ def run_uc(grid, generators, batteries, bat_locs, T):
     fbar = np.array(grid.fbar).flatten()
     n_bus = PTDF.shape[1]
 
+    if len(set(bat_locs.values())) != len(bat_locs):
+        raise ValueError(
+            f"bat_locs assigns more than one battery to the same bus: {bat_locs} "
+            "— only one battery per node is allowed."
+        )
+
     # Decision variables
     p = cp.Variable((n_gen, T), nonneg=True)   # generator output
     u = cp.Variable((n_gen, T), boolean=True)  # commitment (on/off)

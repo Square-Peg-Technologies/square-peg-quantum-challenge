@@ -142,6 +142,10 @@ def run_siting_mip(grid, generators, batteries, T, time_limit_s: float = 120.0) 
     for b in range(n_bat):
         model.addCons(quicksum(x[b, n] for n in range(n_bus)) == 1)
 
+    # At most one battery per bus (one-battery-per-node assumption, matches Plexos).
+    for n in range(n_bus):
+        model.addCons(quicksum(x[b, n] for b in range(n_bat)) <= 1)
+
     # SOS1: SCIP branches on x[b,:] as a "pick one" set, avoiding the
     # exponential binary branching that makes big-M slow.
     for b in range(n_bat):

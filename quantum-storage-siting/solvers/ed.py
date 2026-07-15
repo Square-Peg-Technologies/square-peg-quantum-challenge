@@ -38,6 +38,12 @@ def run_ed(grid, generators, batteries, gen_locs, bat_locs, T):
     n_gen = len(generators)
     n_bat = len(batteries)
     n_bus = PTDF.shape[1]   # 5
+
+    if len(set(bat_locs.values())) != len(bat_locs):
+        raise ValueError(
+            f"bat_locs assigns more than one battery to the same bus: {bat_locs} "
+            "— only one battery per node is allowed."
+        )
     n_line = PTDF.shape[0]  # 6
 
     # ------------------------------------------------------------------
