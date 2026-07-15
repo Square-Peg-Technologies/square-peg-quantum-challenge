@@ -19,16 +19,37 @@ _IEEE14_DIR = os.path.join(os.path.dirname(__file__), "..", "use_cases", "ieee14
 sys.path.insert(0, _IEEE14_DIR)
 
 
-def _load(name, filename):
+def _load(name, filename, sys_modules_overrides=None):
+    """Load a use-case module from file, in isolation from other test files.
+
+    assets_dc_bus4.py (and its siblings) contain a bare `from assets import
+    ...`, which resolves via the real import system's sys.modules cache —
+    not via this function's own `mod` — so it happily picks up whichever
+    use case's "assets" some *other* test file happened to import last
+    under that same generic name. `sys_modules_overrides` pins sys.modules
+    entries for the duration of exec_module so the bare import always
+    resolves to the ieee14 module we just loaded, then restores whatever
+    was cached before so we don't leak our override into other tests.
+    """
     spec = importlib.util.spec_from_file_location(name, os.path.join(_IEEE14_DIR, filename))
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    overrides = sys_modules_overrides or {}
+    saved = {key: sys.modules.get(key) for key in overrides}
+    sys.modules.update(overrides)
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        for key, prev in saved.items():
+            if prev is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = prev
     return mod
 
 
 _ieee14_mod = _load("ieee14", "ieee14.py")
 _assets_mod = _load("assets", "assets.py")
-_assets_dc4_mod = _load("assets_dc_bus4", "assets_dc_bus4.py")
+_assets_dc4_mod = _load("assets_dc_bus4", "assets_dc_bus4.py", sys_modules_overrides={"assets": _assets_mod})
 
 from solvers.quantum_siting import (  # noqa: E402
     build_proxy_cost_fn,
