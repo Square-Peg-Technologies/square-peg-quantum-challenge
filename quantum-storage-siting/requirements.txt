@@ -12,11 +12,19 @@
 # Quantum
 # GPU machines: ALSO run  pip install -r requirements-gpu.txt
 #   (installs qiskit-aer-gpu, which replaces qiskit-aer)
-qiskit==2.4.2
+# qiskit is pinned to the 1.x line, NOT the latest 2.x, because qiskit-aer-gpu
+# is stuck at 0.15.x (no newer GPU build exists) and 0.15.x only supports
+# qiskit<2.0 — see "CPU vs GPU Support" in README.md. qiskit-ibm-runtime is
+# pinned to the last version compatible with qiskit 1.x (0.47.0+ requires
+# qiskit>=2.2.0). Do not bump qiskit past 2.0 without also dropping GPU
+# support or finding a qiskit-aer-gpu release that supports it.
+qiskit==1.4.5
 qiskit-aer==0.15.1
-qiskit-ibm-runtime==0.47.0
+qiskit-ibm-runtime==0.40.1
 dimod==0.12.21
 dwave-samplers==1.7.0
+qbraid==0.12.2
+qbraid-core==0.3.6
 
 # Optimisation
 cvxpy==1.8.2

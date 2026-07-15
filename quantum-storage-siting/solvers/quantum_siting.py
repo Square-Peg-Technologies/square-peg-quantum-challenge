@@ -445,8 +445,21 @@ def run_vqa_qiskit(
     sim_method: str = "statevector",
     max_time_s: float | None = None,
     ansatz: str = "auto",
+    final_backend: str = "local",
+    final_shots: int | None = None,
 ) -> tuple[list[tuple], list[float]]:
     """Run COBYLA VQA and return (candidates, convergence_trace).
+
+    final_backend: "local" (default — final shots sampled on the same local
+        Aer/Qiskit sampler used for training) or "ionq_qbraid" (COBYLA
+        training still runs locally for speed/cost, but the final converged
+        circuit is submitted to the qBraid-routed IonQ device — see
+        solvers/ionq_qbraid_backend.py). final_shots is only used in the
+        "ionq_qbraid" case; if None (default), resolves via
+        ionq_qbraid_backend.default_shots(DEVICE_ID) — 5000 on the free
+        simulator, 500 on billed real hardware, so switching DEVICE_ID to
+        Forte 1 doesn't silently also switch to a 5000-shot bill. The local
+        path always uses 5000 shots for the final extraction.
 
     candidates: list of (u_bits, s_bits, proxy_cost) sorted ascending by proxy_cost.
     convergence_trace: COBYLA objective value at each function evaluation (empty if
@@ -624,11 +637,20 @@ def run_vqa_qiskit(
         _dbg.debug("COBYLA stopped early via plateau detection at nfev=%d", len(convergence_trace))
     t_opt = time.perf_counter() - t_opt_start
 
-    # Final 5000-shot sample
+    # Final shot sample — locally (5000 shots) unless final_backend="ionq_qbraid",
+    # in which case this is the one real qBraid/IonQ submission in the whole run.
     t_final_start = time.perf_counter()
     final_qc = qc.assign_parameters(dict(zip(params, xopt)))
-    job = sampler.run([final_qc], shots=5000)
-    counts = job.result()[0].data.meas.get_counts()
+    if final_backend == "ionq_qbraid":
+        from solvers.ionq_qbraid_backend import run_circuit_shots, default_shots, DEVICE_ID
+        if final_shots is None:
+            final_shots = default_shots(DEVICE_ID)
+        counts = run_circuit_shots(final_qc, shots=final_shots)
+    elif final_backend == "local":
+        job = sampler.run([final_qc], shots=5000)
+        counts = job.result()[0].data.meas.get_counts()
+    else:
+        raise ValueError(f"Unknown final_backend: {final_backend!r} (use 'local' or 'ionq_qbraid')")
 
     # Collect all unique bitstrings with their proxy costs
     seen: dict[str, float] = {}
@@ -657,7 +679,12 @@ def run_vqa_qiskit(
             sim_label = "GPU" if (_AER_AVAILABLE and use_gpu) else "CPU"
         phase_times[f"Aer sampling ({sim_label})"] = _t_sampling[0]
         phase_times["COBYLA + proxy eval (CPU)"] = max(0.0, t_opt - _t_sampling[0])
-        phase_times["Final 5000-shot extraction"] = time.perf_counter() - t_final_start
+        if final_backend == "ionq_qbraid":
+            phase_times[f"IonQ (qBraid) final sampling ({final_shots} shots)"] = (
+                time.perf_counter() - t_final_start
+            )
+        else:
+            phase_times["Final 5000-shot extraction"] = time.perf_counter() - t_final_start
 
     return candidates, convergence_trace
 
@@ -770,6 +797,21 @@ def evaluate_candidates(
     work_items = []
     for u_bits, s_bits, _proxy_cost in candidates:
         placed_buses = [i + 1 for i, b in enumerate(s_bits) if b == "1"]
+        # A candidate with more (or fewer) placed buses than real batteries is
+        # infeasible — it can't map onto len(batteries) battery objects. This
+        # can slip through when the quantum sieve's upstream feasibility
+        # filter falls back to "use all candidates anyway" (e.g. it never
+        # found an exactly-B-battery candidate within the time budget).
+        # Skipping it here — rather than passing it through — is what
+        # prevents a battery-count mismatch from surfacing later as an
+        # IndexError deep in plotting code that assumes bat_locs keys stay
+        # within range(len(batteries)).
+        if len(placed_buses) != len(batteries):
+            _dbg.debug(
+                "Skipping infeasible candidate: %d buses placed, expected %d batteries",
+                len(placed_buses), len(batteries),
+            )
+            continue
         bat_locs = {bat_idx: bus for bat_idx, bus in enumerate(placed_buses)}
         commitment = [int(b) for b in u_bits]
         bat_locs_key = tuple(bat_locs.values())
@@ -779,8 +821,14 @@ def evaluate_candidates(
             seen_bat_locs.add(bat_locs_key)
         work_items.append((bat_locs, commitment, grid_data, generators, batteries, T, second_stage))
 
-    n_workers = min(len(work_items), os.cpu_count() or 1)
     results = []
+    if not work_items:
+        # All candidates were filtered out above (wrong battery count, or
+        # deduped away) — nothing to submit. Let the caller's "no feasible
+        # candidates" check handle this instead of asking for 0 workers.
+        return results
+
+    n_workers = min(len(work_items), os.cpu_count() or 1)
     with ProcessPoolExecutor(max_workers=n_workers,
                              mp_context=multiprocessing.get_context("spawn")) as pool:
         for outcome in pool.map(_eval_one, work_items):
@@ -810,6 +858,7 @@ def run_quantum_siting(
     device: str = "auto",
     max_time_s: float | None = None,
     ansatz: str = "auto",
+    final_shots: int | None = None,
 ):
     """Full hybrid quantum-classical siting pipeline.
 
@@ -819,13 +868,27 @@ def run_quantum_siting(
     generators       : list of generator dicts from assets
     batteries        : list of battery dicts from assets
     T                : number of hours to simulate
-    backend          : "qiskit" | "aer_tn" | "dwave"
+    backend          : "qiskit" | "aer_tn" | "dwave" | "ionq_qbraid"
     n_candidates     : number of candidates to evaluate classically
     second_stage     : "ed" | "uc"
-    warm_start       : "zeros" | "random" | "sdp" (Qiskit path only)
-    track_convergence: record COBYLA objective per iteration (Qiskit path only)
-    device           : "auto" | "GPU" | "CPU" statevector device (Qiskit path only)
-    ansatz           : "auto" | "butterfly" | "linear_chain" (Qiskit/Aer TN path only)
+    warm_start       : "zeros" | "random" | "sdp" (Qiskit/ionq_qbraid path only)
+    track_convergence: record COBYLA objective per iteration (Qiskit/ionq_qbraid path only)
+    device           : "auto" | "GPU" | "CPU" statevector device (Qiskit path only;
+                       ionq_qbraid always trains locally on statevector, same as Qiskit)
+    ansatz           : "auto" | "butterfly" | "linear_chain" (Qiskit/Aer TN/ionq_qbraid path only)
+    final_shots      : shot count for the one real qBraid/IonQ submission when
+                       backend="ionq_qbraid" (minimum 100). If None (default),
+                       auto-picked by ionq_qbraid_backend.default_shots() based
+                       on DEVICE_ID (5000 on the free simulator, 500 on billed
+                       real hardware). Unused otherwise.
+
+    "ionq_qbraid": COBYLA trains locally (identical to the "qiskit" backend —
+    submitting each of the ~150+ training iterations to qBraid would be far
+    too slow/costly), then the single converged circuit is submitted to the
+    qBraid-routed IonQ device (solvers/ionq_qbraid_backend.py) for the final
+    shot sample, so the reported result is a real IonQ execution. See that
+    module's DEVICE_ID for the current device (simulator by default; swap to
+    Forte 1 once real QPU account access is sorted).
 
     Returns
     -------
@@ -862,10 +925,12 @@ def run_quantum_siting(
     # ── Quantum sieve ────────────────────────────────────────────────────────
     t_q_start = time.perf_counter()
 
-    if backend in ("qiskit", "aer_tn"):
+    if backend in ("qiskit", "aer_tn", "ionq_qbraid"):
         # Qiskit VQA: we wrap proxy_fn with feasibility filter via the sieve
         # The sieve returns top candidates regardless of feasibility; we rely on
         # run_vqa_qiskit to return them sorted by proxy_cost (feasible first via P_budget)
+        # "ionq_qbraid" trains locally (statevector, same as "qiskit") and only
+        # swaps the final shot sample onto the qBraid-routed IonQ device.
         _sdp_ingredients = None
         if warm_start == "sdp":
             _sdp_ingredients = {
@@ -875,6 +940,7 @@ def run_quantum_siting(
                 "T": T,
             }
         _sim_method = "tensor_network" if backend == "aer_tn" else "statevector"
+        _final_backend = "ionq_qbraid" if backend == "ionq_qbraid" else "local"
         raw_candidates, convergence_trace = run_vqa_qiskit(
             n_qubits_gen=G,
             n_qubits_bat=n_buses,
@@ -888,6 +954,8 @@ def run_quantum_siting(
             sim_method=_sim_method,
             max_time_s=max_time_s,
             ansatz=ansatz,
+            final_backend=_final_backend,
+            final_shots=final_shots,
         )
 
         # Post-filter to exactly B batteries placed (P_budget == 0)
@@ -948,7 +1016,7 @@ def run_quantum_siting(
         best=best,
         runtime_quantum=runtime_quantum,
         runtime_classical=runtime_classical,
-        warm_start=warm_start if backend == "qiskit" else "zeros",
+        warm_start=warm_start if backend in ("qiskit", "ionq_qbraid") else "zeros",
         convergence_trace=convergence_trace if track_convergence else None,
         runtime_phases=runtime_phases,
     )

@@ -42,10 +42,12 @@ SETTINGS_PATH = os.path.join(OUT_DIR, "dashboard_settings.json")
 HISTORY_PATH = os.path.join(OUT_DIR, "dashboard_history.json")
 
 # Short labels so dropdowns don't get cut off; full descriptions go in info=
-BACKEND_CHOICES = ["Qiskit (GPU)", "Qiskit (CPU)", "Aer TN", "D-Wave SA"]
+BACKEND_CHOICES = ["Qiskit (GPU)", "Qiskit (CPU)", "Aer TN", "D-Wave SA", "IonQ (qBraid29sim)"]
 BACKEND_INFO = ("Qiskit = local statevector VQA on GPU or CPU · "
                 "Aer TN = tensor-network MPS (scales to 36+ qubits) · "
-                "D-Wave SA = classical simulated annealing")
+                "D-Wave SA = classical simulated annealing · "
+                "IonQ (qBraid29sim) = trains locally, final shots run on qBraid-routed "
+                "IonQ hardware/simulator (spends qBraid credits)")
 STAGE_CHOICES = ["ED", "UC"]
 STAGE_INFO = "ED: fix commitment + placement · UC: re-solve commitment, fix placement"
 WARM_START_CHOICES = ["zeros", "random", "sdp"]
@@ -56,6 +58,7 @@ WARM_START_INFO = ("zeros: θ=0 paper sim default · random: IonQ hardware defau
 _LABEL_MIGRATION = {
     "Qiskit (VQA, local simulator)": None,   # resolved to GPU/CPU at startup
     "D-Wave (Simulated Annealing)": "D-Wave SA",
+    "IonQ (qBraid)": "IonQ (qBraid29sim)",
     "ED dispatch (fix commitment and placement)": "ED",
     "Full UC re-solve (fix placement only)": "UC",
     "zeros — paper sim default": "zeros",
@@ -577,6 +580,8 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
         backend = "qiskit"
     elif backend_label == "Aer TN":
         backend = "aer_tn"
+    elif backend_label == "IonQ (qBraid29sim)":
+        backend = "ionq_qbraid"
     else:
         backend = "dwave"
     device = "GPU" if "(GPU)" in backend_label else ("CPU" if "(CPU)" in backend_label else "auto")
@@ -598,6 +603,14 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
                                "install qiskit-aer with tensor-network support.")
         except ImportError:
             raise gr.Error("qiskit-aer is not installed.")
+    if backend == "ionq_qbraid":
+        try:
+            from solvers.ionq_qbraid_backend import _load_token
+            _load_token()
+        except RuntimeError as e:
+            raise gr.Error(str(e))
+        except ImportError:
+            raise gr.Error("qbraid is not installed. Run: pip install qbraid --break-system-packages")
 
     _save_settings("quantum", {
         "use_case": use_case, "assets_file": assets_file, "T": T,
@@ -621,12 +634,16 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
         if backend == "aer_tn":
             print("Aer tensor-network simulator (MPS)")
             print(f"Ansatz: {ansatz_label}  |  Warm-start: {warm_start}")
-        elif backend == "qiskit":
+        elif backend in ("qiskit", "ionq_qbraid"):
             if _AER_AVAILABLE:
                 print(f"Aer statevector device: {device}")
             else:
                 print("Aer: not installed — using Qiskit StatevectorSampler (CPU)")
             print(f"Ansatz: {ansatz_label}  |  Warm-start: {warm_start}")
+            if backend == "ionq_qbraid":
+                from solvers.ionq_qbraid_backend import DEVICE_ID
+                print(f"IonQ (qBraid29sim): training locally above, final shots on device "
+                      f"{DEVICE_ID!r} (real job, spends qBraid credits)")
         result = run_quantum_siting(
             grid=grid, generators=assets_mod.GENERATORS, batteries=assets_mod.BATTERIES,
             T=T, backend=backend, n_candidates=n_candidates,

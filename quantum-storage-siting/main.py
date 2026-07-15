@@ -95,6 +95,24 @@ def load_modules(use_case_name: str, use_case_path: str, assets_path: str) -> tu
     if use_case_path not in sys.path:
         sys.path.insert(0, use_case_path)
 
+    # assets_dc_bus{N}.py variants do a bare "from assets import GENERATORS,
+    # BATTERIES" to inherit their use case's base assets.py. Python caches
+    # that under sys.modules["assets"] on first import — since every use
+    # case has its own assets.py, whichever use case's assets.py got
+    # imported FIRST in this process stays cached under that shared name and
+    # leaks into every other use case's "from assets import ..." for the
+    # rest of the process (e.g. dashboard switching from pjm5 to ieee14).
+    # Force sys.modules["assets"] to this use case's own assets.py right
+    # before loading the requested file, so the bare import always resolves
+    # to the current use case regardless of load order/history.
+    base_assets_path = os.path.join(use_case_path, "assets.py")
+    if os.path.exists(base_assets_path):
+        base_spec = importlib.util.spec_from_file_location("assets", base_assets_path)
+        assert base_spec is not None and base_spec.loader is not None
+        base_assets_mod = importlib.util.module_from_spec(base_spec)
+        sys.modules["assets"] = base_assets_mod
+        base_spec.loader.exec_module(base_assets_mod)  # type: ignore[union-attr]
+
     assets_spec = importlib.util.spec_from_file_location("assets_chosen", assets_path)
     assert assets_spec is not None and assets_spec.loader is not None
     assets_mod = importlib.util.module_from_spec(assets_spec)
@@ -183,6 +201,7 @@ def prompt_quantum_options() -> tuple[str, int, str, str]:
         print("  1. Qiskit (VQA, statevector simulator)")
         print("  2. D-Wave (Simulated Annealing)")
         print("  3. Aer Tensor Network (VQA, MPS — scales to 36+ qubits)")
+        print("  4. IonQ via qBraid (VQA trains locally, final shots on qBraid-routed IonQ)")
         raw = input("Enter number: ").strip()
         if raw == "1":
             backend = "qiskit"
@@ -193,7 +212,10 @@ def prompt_quantum_options() -> tuple[str, int, str, str]:
         elif raw == "3":
             backend = "aer_tn"
             break
-        print("Invalid selection. Please enter 1, 2, or 3.")
+        elif raw == "4":
+            backend = "ionq_qbraid"
+            break
+        print("Invalid selection. Please enter 1, 2, 3, or 4.")
 
     while True:
         raw = input("How many candidates to evaluate classically? [default: 10]: ").strip()
@@ -222,7 +244,7 @@ def prompt_quantum_options() -> tuple[str, int, str, str]:
         print("Invalid selection. Please enter 1 or 2.")
 
     warm_start = "zeros"
-    if backend in ("qiskit", "aer_tn"):
+    if backend in ("qiskit", "aer_tn", "ionq_qbraid"):
         while True:
             print("Warm-start strategy (arXiv:2505.00145):")
             print("  1. zeros  — theta=0, paper simulation default [default]")
@@ -244,12 +266,13 @@ def prompt_quantum_options() -> tuple[str, int, str, str]:
 
 
 def print_quantum_results(result: "QuantumSitingResult") -> None:
-    backend_label = {"qiskit": "Qiskit VQA", "aer_tn": "Aer TN (VQA)", "dwave": "D-Wave SA"}.get(result.backend, result.backend)
+    backend_label = {"qiskit": "Qiskit VQA", "aer_tn": "Aer TN (VQA)", "dwave": "D-Wave SA",
+                     "ionq_qbraid": "IonQ (qBraid29sim)"}.get(result.backend, result.backend)
     stage_label = "ED" if result.second_stage == "ed" else "UC"
 
     warm_label = {"zeros": "θ=0 (paper sim default)", "random": "θ~Uniform[-2π,2π] (paper hardware)", "sdp": "LP-relaxation (paper Sec III)"}.get(result.warm_start, result.warm_start)
     print(f"\nQuantum Siting Results ({backend_label} + {stage_label} refinement)")
-    if result.backend == "qiskit":
+    if result.backend in ("qiskit", "ionq_qbraid"):
         print(f"Warm-start:                {warm_label}")
     print(f"Quantum candidates found:   {len(result.quantum_candidates)}")
     print(f"Candidates evaluated:       {len(result.evaluated)}")
@@ -485,7 +508,7 @@ def main():
         result = run_siting_benders(grid, generators, batteries, T, time_limit_s=time_limit_s)
     else:
         backend, n_candidates, second_stage, warm_start = quantum_opts
-        if backend in ("qiskit", "aer_tn"):
+        if backend in ("qiskit", "aer_tn", "ionq_qbraid"):
             from solvers.quantum_siting import _AER_AVAILABLE, _GPU_AVAILABLE, _AER_TN_AVAILABLE
             if backend == "aer_tn":
                 if _AER_TN_AVAILABLE:
@@ -499,6 +522,10 @@ def main():
                     print("Aer: no GPU — using CPU statevector")
                 else:
                     print("Aer: not installed — using Qiskit StatevectorSampler")
+                if backend == "ionq_qbraid":
+                    from solvers.ionq_qbraid_backend import DEVICE_ID
+                    print(f"IonQ (qBraid29sim): training locally, final shots on device {DEVICE_ID!r} "
+                          "(this submits a real job and spends qBraid credits)")
             print(f"Warm-start: {warm_start}")
         result = run_quantum_siting(
             grid=grid,
