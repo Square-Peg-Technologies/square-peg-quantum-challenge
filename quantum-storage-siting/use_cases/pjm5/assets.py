@@ -8,6 +8,6 @@ GENERATORS = [
 ]
 
 BATTERIES = [
-    {"name": "Bat 0", "power_mw": 50, "capacity_mwh": 200, "efficiency": 0.85, "init_soc": 100},
-    {"name": "Bat 1", "power_mw": 50, "capacity_mwh": 200, "efficiency": 0.85, "init_soc": 100},
+    {"name": "Bat 0", "power_mw": 50, "capacity_mwh": 200, "efficiency": 0.85, "init_soc": 0.90 * 200},
+    {"name": "Bat 1", "power_mw": 50, "capacity_mwh": 200, "efficiency": 0.85, "init_soc": 0.90 * 200},
 ]

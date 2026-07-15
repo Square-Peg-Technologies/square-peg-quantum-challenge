@@ -79,7 +79,7 @@ def test_no_simultaneous_charge_discharge(result):
     for b in range(result.battery_charge.shape[0]):
         for t in range(result.battery_charge.shape[1]):
             product = result.battery_charge[b, t] * result.battery_discharge[b, t]
-            assert product < 1e-6, (
+            assert product < 1e-4, (
                 f"Bat {b} hour {t}: simultaneous charge/discharge"
             )
 

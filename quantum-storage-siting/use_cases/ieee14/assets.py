@@ -37,10 +37,10 @@ GENERATORS = [
 ]
 
 BATTERIES = [
-    {"name": "Bat 0", "power_mw": 50.0, "capacity_mwh": 200.0, "efficiency": 0.90, "init_soc": 100.0},
-    {"name": "Bat 1", "power_mw": 50.0, "capacity_mwh": 200.0, "efficiency": 0.90, "init_soc": 100.0},
-    {"name": "Bat 2", "power_mw": 50.0, "capacity_mwh": 200.0, "efficiency": 0.90, "init_soc": 100.0},
-    {"name": "Bat 3", "power_mw": 50.0, "capacity_mwh": 200.0, "efficiency": 0.90, "init_soc": 100.0},
+    {"name": "Bat 0", "power_mw": 50.0, "capacity_mwh": 200.0, "efficiency": 0.90, "init_soc": 0.90 * 200.0},
+    {"name": "Bat 1", "power_mw": 50.0, "capacity_mwh": 200.0, "efficiency": 0.90, "init_soc": 0.90 * 200.0},
+    {"name": "Bat 2", "power_mw": 50.0, "capacity_mwh": 200.0, "efficiency": 0.90, "init_soc": 0.90 * 200.0},
+    {"name": "Bat 3", "power_mw": 50.0, "capacity_mwh": 200.0, "efficiency": 0.90, "init_soc": 0.90 * 200.0},
 ]
 
 DATACENTER_BUS: int | None = None
