@@ -1,0 +1,314 @@
+\documentclass[11pt, letterpaper]{article}
+
+\usepackage{amsmath, amssymb}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{enumitem}
+
+\geometry{margin=1.1in}
+\hypersetup{colorlinks=true, linkcolor=blue!60!black, urlcolor=blue!60!black}
+
+\titleformat{\section}{\large\bfseries}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries}{}{0em}{}
+
+\title{\textbf{PJM 5-Bus Battery Siting Problem}\\[0.4em]
+       \large Mathematical Formulation}
+\author{Square Peg --- PQIC Phase 2}
+\date{2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\vspace{1em}
+
+% ============================================================
+\section{Overview}
+
+This document gives the complete mathematical formulation for the classical baseline
+of the battery siting problem on the PJM 5-bus network. Three optimizations are
+defined, each building on the last:
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Economic Dispatch (ED):} All generators are committed; find the
+        least-cost output schedule including battery charge/discharge.
+  \item \textbf{Unit Commitment (UC):} Also decide which generators to turn on or
+        off each hour. Binary decisions make this a mixed-integer problem.
+  \item \textbf{Battery Siting:} An outer loop over all placements of 2 batteries
+        on the 5-bus grid. Runs UC for each of the $\binom{5}{2}=10$ combinations
+        and ranks by total cost.
+\end{enumerate}
+
+The DC power flow approximation is used throughout. All costs are in USD.
+
+% ============================================================
+\section{Network and Sets}
+
+\subsection{Sets and Indices}
+
+\begin{tabular}{@{}ll@{}}
+  $\mathcal{N} = \{1,\dots,5\}$   & Buses (nodes) \\
+  $\mathcal{L} = \{1,\dots,6\}$   & Transmission lines \\
+  $\mathcal{G} = \{0,1,2\}$       & Generators \\
+  $\mathcal{B} = \{0,1\}$         & Batteries \\
+  $\mathcal{T} = \{1,\dots,T\}$   & Time steps (hours), $T \leq 24$ \\
+\end{tabular}
+
+\subsection{Network Data}
+
+\begin{tabular}{@{}lll@{}}
+  \toprule
+  Line & From--To buses & Flow limit $\bar{f}_\ell$ (MW) \\
+  \midrule
+  1 & 1--2 & 500 \\
+  2 & 1--4 & unconstrained \\
+  3 & 1--5 & unconstrained \\
+  4 & 2--3 & unconstrained \\
+  5 & 3--4 & unconstrained \\
+  6 & 4--5 & 350 \\
+  \bottomrule
+\end{tabular}
+
+\vspace{0.8em}
+The \textbf{Power Transfer Distribution Factor} (PTDF) matrix
+$H \in \mathbb{R}^{|\mathcal{L}| \times |\mathcal{N}|}$ maps nodal net injections
+to line flows under the DC approximation:
+\[
+  f_\ell = \sum_{n \in \mathcal{N}} H_{\ell n}\, p^{\text{net}}_n, \qquad \ell \in \mathcal{L}.
+\]
+
+% ============================================================
+\section{Generator Data}
+
+\subsection{Parameters}
+
+Each generator $g \in \mathcal{G}$ has output limits and a quadratic cost curve:
+
+\begin{tabular}{@{}lllllll@{}}
+  \toprule
+  Unit & Bus & $\underline{p}_g$ (MW) & $\bar{p}_g$ (MW)
+       & $a_g$ (USD/MW$^2$h) & $b_g$ (USD/MWh) & $c_g$ (USD) \\
+  \midrule
+  0 & 1 & 100 & 600 & 0.002  & 10 & 500 \\
+  1 & 3 & 100 & 400 & 0.0025 &  8 & 300 \\
+  2 & 5 &  50 & 200 & 0.005  &  6 & 100 \\
+  \bottomrule
+\end{tabular}
+
+\subsection{Generation Cost Function}
+
+When generator $g$ is operating at output $p_{g,t}$ in hour $t$, its cost is:
+\[
+  C_g(p_{g,t}) = a_g\, p_{g,t}^2 + b_g\, p_{g,t} + c_g.
+\]
+The no-load cost $c_g$ is incurred whenever the unit is \emph{on}. In the ED
+formulation all units are always on; in UC it is multiplied by the binary
+commitment variable.
+
+% ============================================================
+\section{Battery Data}
+
+\subsection{Parameters}
+
+Both batteries $b \in \mathcal{B}$ are identical Li-ion units sized for daily
+energy shifting (NREL ATB 2024):
+
+\begin{tabular}{@{}ll@{}}
+  \toprule
+  Parameter & Value \\
+  \midrule
+  Power rating $\bar{r}$ & 50 MW \\
+  Energy capacity $E^{\max}$ & 200 MWh \\
+  Minimum state of charge $E^{\min}$ & 0 MWh \\
+  Initial state of charge $E^0$ & 100 MWh \\
+  Round-trip efficiency $\eta$ & 0.85 \\
+  \bottomrule
+\end{tabular}
+
+\vspace{0.5em}
+\textbf{Round-trip efficiency:} charging the battery with 100~MWh of electricity
+stores only $\eta \cdot 100 = 85$~MWh of recoverable energy; the remaining 15\%
+is dissipated as heat. The efficiency factor is applied to the charging side in the
+SOC update equation.
+
+% ============================================================
+\section{Decision Variables}
+
+\subsection{Continuous Variables}
+
+\begin{tabular}{@{}lll@{}}
+  \toprule
+  Variable & Domain & Description \\
+  \midrule
+  $p_{g,t}$       & $\mathbb{R}_{\geq 0}$ & Output of generator $g$ at time $t$ (MW) \\
+  $r^+_{b,t}$     & $\mathbb{R}_{\geq 0}$ & Charge power of battery $b$ at time $t$ (MW) \\
+  $r^-_{b,t}$     & $\mathbb{R}_{\geq 0}$ & Discharge power of battery $b$ at time $t$ (MW) \\
+  $e_{b,t}$       & $\mathbb{R}_{\geq 0}$ & State of charge of battery $b$ at time $t$ (MWh) \\
+  \bottomrule
+\end{tabular}
+
+\subsection{Binary Variables (UC and Siting only)}
+
+\begin{tabular}{@{}lll@{}}
+  \toprule
+  Variable & Domain & Description \\
+  \midrule
+  $u_{g,t}$ & $\{0,1\}$ & 1 if generator $g$ is on in hour $t$, else 0 \\
+  $v_{g,t}$ & $\{0,1\}$ & 1 if generator $g$ starts up in hour $t$, else 0 \\
+  $z_{b,t}$ & $\{0,1\}$ & 1 if battery $b$ is charging in hour $t$, else 0 \\
+  \bottomrule
+\end{tabular}
+
+% ============================================================
+\section{Economic Dispatch Formulation}
+
+All generators are on for all $t$. No binary variables.
+
+\subsection{Objective}
+
+\[
+  \min_{p,\, r^+,\, r^-,\, e}
+  \sum_{t \in \mathcal{T}} \sum_{g \in \mathcal{G}}
+  \Bigl( a_g\, p_{g,t}^2 + b_g\, p_{g,t} + c_g \Bigr)
+\]
+
+\subsection{Constraints}
+
+\textbf{Power balance} (at each bus $n$, each hour $t$):
+\[
+  \sum_{g:\, \text{bus}(g)=n} p_{g,t}
+  + \sum_{b:\, \text{bus}(b)=n} \bigl(r^-_{b,t} - r^+_{b,t}\bigr)
+  = d_{n,t},
+  \qquad \forall\, n \in \mathcal{N},\; t \in \mathcal{T}
+\]
+where $d_{n,t}$ is the load at bus $n$ in hour $t$.
+
+\textbf{Line flow limits}:
+\[
+  -\bar{f}_\ell \;\leq\; \sum_{n} H_{\ell n}\,
+  \bigl(p^{\text{gen}}_{n,t} + p^{\text{bat,net}}_{n,t} - d_{n,t}\bigr)
+  \;\leq\; \bar{f}_\ell,
+  \qquad \forall\, \ell \in \mathcal{L},\; t \in \mathcal{T}
+\]
+
+\textbf{Generator output limits}:
+\[
+  \underline{p}_g \;\leq\; p_{g,t} \;\leq\; \bar{p}_g,
+  \qquad \forall\, g \in \mathcal{G},\; t \in \mathcal{T}
+\]
+
+\textbf{Battery state-of-charge dynamics}:
+\[
+  e_{b,t} = e_{b,t-1} + \eta\, r^+_{b,t} - r^-_{b,t},
+  \qquad \forall\, b \in \mathcal{B},\; t \in \mathcal{T}
+\]
+with $e_{b,0} = E^0_b$.
+
+\textbf{Battery SOC limits}:
+\[
+  E^{\min} \;\leq\; e_{b,t} \;\leq\; E^{\max},
+  \qquad \forall\, b \in \mathcal{B},\; t \in \mathcal{T}
+\]
+
+\textbf{Battery power limits and no simultaneous charge/discharge}:
+\[
+  r^+_{b,t} \;\leq\; \bar{r}\, z_{b,t},
+  \qquad
+  r^-_{b,t} \;\leq\; \bar{r}\,(1 - z_{b,t}),
+  \qquad \forall\, b \in \mathcal{B},\; t \in \mathcal{T}
+\]
+
+\emph{Note:} $z_{b,t}$ is binary in UC/Siting. In ED, if CVXPY does not enforce it
+as binary, it is treated as continuous in $[0,1]$; the optimizer will naturally drive
+it to 0 or 1 because simultaneous charge and discharge is never economically optimal.
+
+% ============================================================
+\section{Unit Commitment Formulation}
+
+Extends ED by adding binary commitment decisions.
+
+\subsection{Objective}
+
+\[
+  \min_{p,\, u,\, v,\, r^+,\, r^-,\, e}
+  \sum_{t \in \mathcal{T}} \sum_{g \in \mathcal{G}}
+  \Bigl( a_g\, p_{g,t}^2 + b_g\, p_{g,t} + c_g\, u_{g,t}
+         + S_g\, v_{g,t} \Bigr)
+\]
+where $S_g$ is the startup cost of generator $g$.
+
+\subsection{Additional Constraints}
+
+\textbf{Generator limits with commitment}:
+\[
+  \underline{p}_g\, u_{g,t} \;\leq\; p_{g,t} \;\leq\; \bar{p}_g\, u_{g,t},
+  \qquad \forall\, g \in \mathcal{G},\; t \in \mathcal{T}
+\]
+
+\textbf{Startup indicator}:
+\[
+  v_{g,t} \;\geq\; u_{g,t} - u_{g,t-1},
+  \qquad \forall\, g \in \mathcal{G},\; t \in \mathcal{T}
+\]
+with $u_{g,0} = 0$. This forces $v_{g,t} = 1$ whenever a unit transitions from off
+to on; combined with $v_{g,t} \geq 0$ and the minimization, the optimizer sets
+$v_{g,t} = \max(0,\, u_{g,t} - u_{g,t-1})$.
+
+All ED constraints (power balance, line flows, battery dynamics) apply unchanged.
+The problem class is \textbf{MIQP} (mixed-integer quadratic program), solved with SCIP.
+
+% ============================================================
+\section{Battery Siting Formulation}
+
+\subsection{Structure}
+
+Siting is an outer loop over all placements of the two batteries on the 5-bus grid.
+It calls the UC solver as a black box for each placement:
+
+\[
+  \text{Siting:} \quad
+  \min_{\,\phi \in \Phi\,}\ C^*_{\text{UC}}(\phi)
+\]
+
+where $\Phi$ is the set of all bus-pair assignments and $C^*_{\text{UC}}(\phi)$ is
+the optimal UC cost when batteries are placed at buses given by $\phi$.
+
+\subsection{Search Space}
+
+With 5 buses and 2 batteries (unordered placement):
+\[
+  |\Phi| = \binom{5}{2} = 10
+\]
+
+The 10 combinations are enumerated explicitly. For each $\phi \in \Phi$, the
+UC problem from Section~6 is solved with battery bus assignments fixed to $\phi$.
+Results are ranked by $C^*_{\text{UC}}(\phi)$.
+
+\subsection{Complexity}
+
+Each UC solve is a MIQP with $3T$ binary variables ($T \leq 24$).
+Total wall-clock time is approximately $10 \times t_{\text{UC}}$, where
+$t_{\text{UC}} \approx 5$--$30$ seconds for $T = 24$, giving a siting runtime
+of roughly 1--5 minutes. Each UC solve is independent and can be parallelised.
+
+% ============================================================
+\section{Summary Table}
+
+\begin{tabular}{@{}llllll@{}}
+  \toprule
+  Formulation & Binary vars & Continuous vars & Problem class & Solver & Est.\ runtime \\
+  \midrule
+  ED      & 0        & $9T$       & QP   & HiGHS & $<1$ s \\
+  UC      & $3T$     & $9T$       & MIQP & SCIP  & 5--30 s \\
+  Siting  & $10\times3T$ & $10\times9T$ & MIQP $\times$ 10 & SCIP & 1--5 min \\
+  \bottomrule
+\end{tabular}
+
+\vspace{0.5em}
+Variable counts are for $T=24$: $9T = 216$ continuous, $3T = 72$ binary per solve.
+
+\end{document}
