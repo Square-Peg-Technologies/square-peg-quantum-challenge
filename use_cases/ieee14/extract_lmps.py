@@ -12,7 +12,7 @@ Outputs:
   shadow_prices_20x24.csv — shadow price table (lines as rows, hours as columns)
   lmp_summary.csv         — per-bus LMP mean, variance, std
 
-Run from the quantum-storage-siting root:
+Run from the repo root:
     python use_cases/ieee14/extract_lmps.py
 
 Or directly:

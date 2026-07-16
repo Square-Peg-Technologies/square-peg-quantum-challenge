@@ -5,7 +5,7 @@ Sweeps all 14 buses as potential datacenter locations (flat 200 MW, 24 h),
 runs Economic Dispatch for each, ranks feasible placements by total cost,
 and writes assets_dc_bus{N}.py for every feasible bus.
 
-Run from the quantum-storage-siting root:
+Run from the repo root:
     python use_cases/ieee14/site_datacenter.py
 
 Or directly:
