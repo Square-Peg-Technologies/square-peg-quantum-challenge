@@ -2,6 +2,8 @@
 
 Square Peg Technologies — PQIC Challenge
 
+Challenge Track: Storage siting and sizing for resilience and AI load integration
+
 [<img src="https://qbraid-static.s3.amazonaws.com/logos/Launch_on_qBraid_white.png" width="150">](https://account.qbraid.com?gitHubUrl=https://github.com/Square-Peg-Technologies/square-peg-quantum-challenge.git&redirectUrl=/README.md)
 
 Hybrid quantum-classical solver for battery energy storage system (BESS) siting
@@ -534,6 +536,13 @@ itself does not depend on T.
   IEEE 14-Bus above) that has not yet been root-caused.
 - Contingency (generator trip) and weather-scaling scenarios referenced in
   the Phase 3 paper are not yet implemented in this codebase.
+- On the current benchmarked instances, the quantum sieve does not yet
+  outperform classical exhaustive/Benders battery siting on wall-clock time
+  (see Solver Performance above — e.g. ~2.5 min quantum vs. ~15s classical
+  on ieee14); at these small candidate-set sizes (C(14,4) = 1,001 placements
+  or fewer), exhaustive classical search is cheap enough that the quantum
+  step's current value is in demonstrating the VQA candidate-generation
+  pipeline end-to-end, not in a runtime advantage over classical search.
 
 
 ## References
