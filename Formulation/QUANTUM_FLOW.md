@@ -1,5 +1,12 @@
 # Quantum Siting — Call Flow and Architecture
 
+> Note: this diagram predates the congestion-signal (P_loc), Aer Tensor
+> Network, and IonQ-via-qBraid additions, and its line numbers are stale.
+> Only the backend/D-Wave references have been corrected here (D-Wave was
+> removed entirely; the old single `backend` string is now the independent
+> `sim_method` + `final_backend` pair). A full rewrite reflecting the
+> current call flow is a separate, larger task.
+
 ## High-Level Data Flow
 
 ```
@@ -10,7 +17,7 @@ build_proxy_cost_fn()          -- cheap score function, no solver
         |
         v
 quantum sieve                  -- samples 8-qubit space
-  Qiskit VQA  or  D-Wave SA
+  Qiskit VQA  or  Aer Tensor Network (VQA)
         |
         v
 top N (u_bits, s_bits)         -- ranked bitstring candidates
@@ -33,54 +40,38 @@ QuantumSitingResult            -- printed to terminal
 main()                                                [main.py]
   |
   |-- prompt_quantum_options()
-  |     returns: backend, n_candidates, second_stage
+  |     returns: sim_method, final_backend, n_candidates, second_stage
   |
-  |-- run_quantum_siting(grid, generators, batteries,  [quantum_siting.py:369]
-  |       T, backend, n_candidates, second_stage)
+  |-- run_quantum_siting(grid, generators, batteries,  [quantum_siting.py]
+  |       T, sim_method, final_backend, n_candidates, second_stage)
   |
   |   STEP 1 — Proxy cost
-  |   |-- build_proxy_cost_fn(generators, batteries,   [quantum_siting.py:23]
+  |   |-- build_proxy_cost_fn(generators, batteries,   [quantum_siting.py]
   |   |       n_buses, demand_ref)
   |   |     returns: (proxy_fn, lambda1, lambda2)
   |   |
   |   |   proxy_fn(bitstring) -> float
   |   |     Q(u,s) = c_min(u) + λ1*P_budget(s) + λ2*P_infeas(u,s)
   |   |
-  |   STEP 2 — Quantum sieve
-  |   |
-  |   |   [Qiskit path]
-  |   |-- run_vqa_qiskit(n_qubits_gen, n_qubits_bat,  [quantum_siting.py:179]
-  |   |       proxy_fn, n_candidates)
+  |   STEP 2 — Quantum sieve (sim_method picks statevector vs tensor_network;
+  |   |         final_backend picks local vs ionq_qbraid for the final shots)
+  |   |-- run_vqa_qiskit(n_qubits_gen, n_qubits_bat,   [quantum_siting.py]
+  |   |       proxy_fn, n_candidates, sim_method, final_backend)
   |   |     |
-  |   |     |-- build_butterfly_ansatz(n_qubits=8,     [quantum_siting.py:149]
-  |   |     |       n_layers=3)
+  |   |     |-- build_butterfly_ansatz / build_linear_chain_ansatz
   |   |     |     returns: (QuantumCircuit, params)
-  |   |     |     circuit: L layers of RZX + RY gates
   |   |     |
-  |   |     |-- StatevectorSampler.run()               [Qiskit]
+  |   |     |-- AerSamplerV2 / BackendSamplerV2.run()  [Qiskit / Aer TN]
   |   |     |     512 shots per COBYLA iteration
   |   |     |
   |   |     |-- scipy COBYLA optimizer
   |   |     |     objective: mean Q(u,s) over sampled bitstrings
   |   |     |     up to 300 iterations
   |   |     |
-  |   |     |-- StatevectorSampler.run()
-  |   |     |     5000-shot final extraction
+  |   |     |-- local sampler (5000 shots) or IonQ via qBraid
+  |   |     |     final_backend="ionq_qbraid" routes this one real job
   |   |     |
   |   |     returns: [(u_bits, s_bits, proxy_cost), ...]
-  |   |
-  |   |   [D-Wave path]
-  |   |-- build_bqm(generators, batteries,             [quantum_siting.py:74]
-  |   |       n_buses, demand_ref, lambda1, lambda2)
-  |   |     returns: dimod.BinaryQuadraticModel
-  |   |     (same Q(u,s) encoded as QUBO linear + quadratic terms)
-  |   |
-  |   |-- run_dwave_sa(bqm, n_qubits_gen, n_qubits_bat,[quantum_siting.py:251]
-  |   |       B, n_candidates)
-  |   |     |-- SimulatedAnnealingSampler.sample()     [D-Wave]
-  |   |     |     num_reads = max(2000, 10 * n_candidates)
-  |   |     filter: sum(s)==B, u!="000", deduplicate
-  |   |     returns: [(u_bits, s_bits, energy), ...]
   |   |
   |   STEP 3 — Classical refinement
   |   |-- evaluate_candidates(candidates, grid,        [quantum_siting.py:303]
@@ -161,7 +152,8 @@ P_infeas(u,s)  Capacity penalty.
 
 ```
 QuantumSitingResult
-  backend            "qiskit" | "dwave"
+  sim_method         "statevector" | "tensor_network"
+  final_backend      "local" | "ionq_qbraid"
   second_stage       "ed" | "uc"
   n_candidates       number requested
   quantum_candidates [(u_bits, s_bits, proxy_cost), ...]   -- from sieve

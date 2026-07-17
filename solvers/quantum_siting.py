@@ -1,7 +1,7 @@
 """
 Quantum Siting Solver — hybrid quantum-classical siting optimization.
 
-Implements a quantum sieve stage (Qiskit VQA or D-Wave SA) over the joint
+Implements a quantum sieve stage (Qiskit VQA) over the joint
 (generator commitment, battery placement) space, followed by classical
 refinement via ED or UC.
 
@@ -38,12 +38,10 @@ try:
     from qiskit.primitives import BackendSamplerV2 as _BackendSamplerV2
     _AER_AVAILABLE = True
     _aer_sim = _AerSimulator()
-    _GPU_AVAILABLE = "GPU" in _aer_sim.available_devices()
     _AER_TN_AVAILABLE = "matrix_product_state" in _aer_sim.available_methods()
     del _aer_sim
 except Exception:
     _AER_AVAILABLE = False
-    _GPU_AVAILABLE = False
     _AER_TN_AVAILABLE = False
 
 
@@ -167,7 +165,7 @@ def build_proxy_cost_fn(
                         - P_loc(s)
         where P_loc(s) = T * sum_i s_i * congestion_signal[i] (congestion relief bonus).
 
-    lambda1, lambda2 are the BQM lambdas (D-Wave path, per-hour scaling).
+    lambda1, lambda2 are per-hour penalty-scaling coefficients.
     proxy_fn uses T-scaled lambdas with a one-sided infeasibility penalty so that
     over-capacity combinations are not penalised (only shortfall is penalised).
     congestion_signal: optional (n_buses,) array from compute_congestion_signal();
@@ -226,90 +224,6 @@ def build_proxy_cost_fn(
         return c_min_val + _lam1 * p_budget + _lam2 * p_infeas - p_loc
 
     return proxy_fn, lambda1, lambda2
-
-
-# ---------------------------------------------------------------------------
-# BQM builder for D-Wave path
-# ---------------------------------------------------------------------------
-
-def build_bqm(
-    generators: list[dict],
-    batteries: list[dict],
-    n_buses: int,
-    demand_ref: float,
-    lambda1: float,
-    lambda2: float,
-    congestion_signal: np.ndarray | None = None,
-):
-    """Build a dimod.BinaryQuadraticModel encoding Q(u, s).
-
-    Variable naming: u_g for generator g, s_i for bus i.
-    congestion_signal: optional (n_buses,) array from compute_congestion_signal();
-        adds a linear bias -signal[i] to each s_i (congestion relief bonus, $/h).
-    Returns the BQM (vartype=BINARY).
-    """
-    import dimod
-
-    G = len(generators)
-    B = len(batteries)
-    P_bat = batteries[0]["power_mw"]
-    D = demand_ref
-
-    bqm = dimod.BinaryQuadraticModel(vartype="BINARY")
-
-    # 1. c_min(u): linear term per generator
-    for g, gen in enumerate(generators):
-        h = gen["cost_a"] * gen["p_min"] ** 2 + gen["cost_b"] * gen["p_min"] + gen["cost_c"]
-        bqm.add_variable(f"u_{g}", h)
-
-    # 2. P_budget(s) = (sum_i s_i - B)^2
-    #    Expansion: sum_i s_i - 2B*sum_i s_i + 2*sum_{i<j} s_i*s_j + B^2
-    #    Linear: (1 - 2B) per s_i; Quadratic: 2 per pair; Offset: B^2
-    for i in range(n_buses):
-        bqm.add_variable(f"s_{i}", lambda1 * (1 - 2 * B))
-    for i in range(n_buses):
-        for j in range(i + 1, n_buses):
-            bqm.add_interaction(f"s_{i}", f"s_{j}", lambda1 * 2.0)
-    bqm.offset += lambda1 * B ** 2
-
-    # 3. P_infeas(u, s) = (D - sum_g P_g*u_g - sum_i P_bat*s_i)^2
-    #    Expand fully (using binary^2 = binary):
-    #    Linear u_g: P_g^2 - 2*D*P_g
-    #    Linear s_i: P_bat^2 - 2*D*P_bat
-    #    Quadratic u_g,u_h (g<h): 2*P_g*P_h
-    #    Quadratic s_i,s_j (i<j): 2*P_bat^2
-    #    Cross u_g,s_i: 2*P_g*P_bat
-    #    Offset: D^2
-    p_max_vals = [gen["p_max"] for gen in generators]
-
-    for g in range(G):
-        Pg = p_max_vals[g]
-        bqm.add_variable(f"u_{g}", lambda2 * (Pg ** 2 - 2 * D * Pg))
-
-    for i in range(n_buses):
-        bqm.add_variable(f"s_{i}", lambda2 * (P_bat ** 2 - 2 * D * P_bat))
-
-    for g in range(G):
-        for h in range(g + 1, G):
-            bqm.add_interaction(f"u_{g}", f"u_{h}", lambda2 * 2 * p_max_vals[g] * p_max_vals[h])
-
-    for i in range(n_buses):
-        for j in range(i + 1, n_buses):
-            bqm.add_interaction(f"s_{i}", f"s_{j}", lambda2 * 2 * P_bat ** 2)
-
-    for g in range(G):
-        for i in range(n_buses):
-            bqm.add_interaction(f"u_{g}", f"s_{i}", lambda2 * 2 * p_max_vals[g] * P_bat)
-
-    bqm.offset += lambda2 * D ** 2
-
-    # P_loc: congestion relief bonus — subtract signal[i] from linear bias of s_i
-    if congestion_signal is not None:
-        cong = np.asarray(congestion_signal, dtype=float)
-        for i in range(n_buses):
-            bqm.add_variable(f"s_{i}", -float(cong[i]))
-
-    return bqm
 
 
 # ---------------------------------------------------------------------------
@@ -441,7 +355,6 @@ def run_vqa_qiskit(
     track_convergence: bool = False,
     _sdp_ingredients: dict | None = None,
     phase_times: dict | None = None,
-    device: str = "auto",
     sim_method: str = "statevector",
     max_time_s: float | None = None,
     ansatz: str = "auto",
@@ -467,8 +380,6 @@ def run_vqa_qiskit(
     phase_times: optional dict filled in-place with wall-time per phase:
         statevector sampling (accumulated sampler calls during COBYLA),
         COBYLA classical overhead, and the final 5000-shot extraction.
-    device: "auto" (GPU if available), "GPU" (RuntimeError if unavailable),
-        or "CPU" (forced even when a GPU exists).
 
     warm_start strategies (arXiv:2505.00145):
       "zeros"  — θ=0, paper simulation default (Section IV-A)
@@ -507,30 +418,14 @@ def run_vqa_qiskit(
             "sim_method='tensor_network' requested but not available — "
             "install qiskit-aer with matrix_product_state support."
         )
-    if device not in ("auto", "GPU", "CPU"):
-        raise ValueError(f"Unknown device: {device!r} (use 'auto', 'GPU', or 'CPU')")
-    if device == "GPU" and not (_AER_AVAILABLE and _GPU_AVAILABLE):
-        raise RuntimeError(
-            "GPU statevector requested but not available — qiskit-aer-gpu is "
-            "missing or no GPU was detected. Use device='CPU' or 'auto'."
-        )
-    use_gpu = _GPU_AVAILABLE if device == "auto" else device == "GPU"
-
     if _AER_AVAILABLE:
         if sim_method == "tensor_network":
             # CPU-native MPS: handles 36+ qubits without the memory requirements of
-            # statevector.  cuTensorNet (GPU) fails on our 4-layer linear-chain circuits
-            # with CUTENSORNET_STATUS_INTERNAL_ERROR regardless of qubit count, so we
-            # use BackendSamplerV2 + AerSimulator(mps) which is reliable.
+            # statevector simulation.
             sampler = _BackendSamplerV2(backend=_AerSimulator(method="matrix_product_state"))
         else:
             sampler = _AerSamplerV2()
-            if use_gpu:
-                sampler.options.backend_options = {
-                    "method": "statevector", "device": "GPU", "precision": "single"
-                }
-            else:
-                sampler.options.backend_options = {"method": "statevector", "device": "CPU"}
+            sampler.options.backend_options = {"method": "statevector", "device": "CPU"}
     else:
         from qiskit.primitives import StatevectorSampler
         sampler = StatevectorSampler()
@@ -572,7 +467,7 @@ def run_vqa_qiskit(
     _dbg.debug("warm_start=%s theta0 β-block mean=%.3f", warm_start, theta0[n_gamma:].mean())
 
     convergence_trace: list[float] = []
-    _t_sampling = [0.0]   # accumulated wall time inside sampler calls (GPU/CPU statevector)
+    _t_sampling = [0.0]   # accumulated wall time inside sampler calls (CPU statevector)
     _deadline = [None if max_time_s is None else time.perf_counter() + max_time_s]
 
     # Plateau detection state — stochastic objectives keep COBYLA's trust region
@@ -673,10 +568,7 @@ def run_vqa_qiskit(
             break
 
     if phase_times is not None:
-        if sim_method == "tensor_network":
-            sim_label = "MPS-CPU"
-        else:
-            sim_label = "GPU" if (_AER_AVAILABLE and use_gpu) else "CPU"
+        sim_label = "MPS-CPU" if sim_method == "tensor_network" else "CPU"
         phase_times[f"Aer sampling ({sim_label})"] = _t_sampling[0]
         phase_times["COBYLA + proxy eval (CPU)"] = max(0.0, t_opt - _t_sampling[0])
         if final_backend == "ionq_qbraid":
@@ -687,58 +579,6 @@ def run_vqa_qiskit(
             phase_times["Final 5000-shot extraction"] = time.perf_counter() - t_final_start
 
     return candidates, convergence_trace
-
-
-# ---------------------------------------------------------------------------
-# D-Wave simulated annealing path
-# ---------------------------------------------------------------------------
-
-def run_dwave_sa(
-    bqm,
-    n_qubits_gen: int,
-    n_qubits_bat: int,
-    B: int,
-    n_candidates: int,
-    num_reads: int | None = None,
-) -> list[tuple]:
-    """Run SimulatedAnnealingSampler and return top n_candidates feasible bitstrings.
-
-    B is the number of batteries that must be placed (exact count filter).
-    num_reads overrides the default max(2000, 10*n_candidates) — useful for tests.
-    Returns list of (u_bits, s_bits, energy) sorted ascending by energy.
-    """
-    from dwave.samplers import SimulatedAnnealingSampler
-
-    if num_reads is None:
-        num_reads = max(2000, 10 * n_candidates)
-    sampler = SimulatedAnnealingSampler()
-    sampleset = sampler.sample(bqm, num_reads=num_reads)
-
-    candidates = []
-    seen: set[str] = set()
-
-    for sample, energy in sampleset.data(["sample", "energy"]):
-        # Extract u and s bit arrays in variable-name order
-        u_bits = "".join(str(sample[f"u_{g}"]) for g in range(n_qubits_gen))
-        s_bits = "".join(str(sample[f"s_{i}"]) for i in range(n_qubits_bat))
-
-        # Feasibility: exactly B batteries placed
-        if sum(int(b) for b in s_bits) != B:
-            continue
-
-        if all(b == "0" for b in u_bits):
-            continue
-
-        key = u_bits + s_bits
-        if key in seen:
-            continue
-        seen.add(key)
-        candidates.append((u_bits, s_bits, float(energy)))
-
-        if len(candidates) >= n_candidates:
-            break
-
-    return candidates
 
 
 # ---------------------------------------------------------------------------
@@ -781,9 +621,9 @@ def evaluate_candidates(
     Candidates are evaluated in parallel using all available CPU cores.
     second_stage: "ed" | "uc"
 
-    Workers use the "spawn" start method: the parent holds an active CUDA
-    context after GPU statevector sampling, and fork()ing a CUDA-active
-    process intermittently deadlocks the child (fork is unsafe with CUDA).
+    Workers use the "spawn" start method rather than "fork" for a clean
+    process start (each worker re-imports what it needs instead of
+    inheriting parent process/interpreter state).
     """
     import multiprocessing
     from concurrent.futures import ProcessPoolExecutor
@@ -849,13 +689,12 @@ def run_quantum_siting(
     generators: list[dict],
     batteries: list[dict],
     T: int,
-    backend: str,
+    sim_method: str,
+    final_backend: str,
     n_candidates: int,
     second_stage: str,
     warm_start: str = "zeros",
     track_convergence: bool = False,
-    _num_reads: int | None = None,
-    device: str = "auto",
     max_time_s: float | None = None,
     ansatz: str = "auto",
     final_shots: int | None = None,
@@ -868,22 +707,24 @@ def run_quantum_siting(
     generators       : list of generator dicts from assets
     batteries        : list of battery dicts from assets
     T                : number of hours to simulate
-    backend          : "qiskit" | "aer_tn" | "dwave" | "ionq_qbraid"
+    sim_method       : "statevector" | "tensor_network" — how the VQA trains
+                       (independent of where the final shots come from)
+    final_backend    : "local" | "ionq_qbraid" — where the final converged
+                       circuit is sampled (independent of sim_method; training
+                       always runs locally either way)
     n_candidates     : number of candidates to evaluate classically
     second_stage     : "ed" | "uc"
-    warm_start       : "zeros" | "random" | "sdp" (Qiskit/ionq_qbraid path only)
-    track_convergence: record COBYLA objective per iteration (Qiskit/ionq_qbraid path only)
-    device           : "auto" | "GPU" | "CPU" statevector device (Qiskit path only;
-                       ionq_qbraid always trains locally on statevector, same as Qiskit)
-    ansatz           : "auto" | "butterfly" | "linear_chain" (Qiskit/Aer TN/ionq_qbraid path only)
+    warm_start       : "zeros" | "random" | "sdp"
+    track_convergence: record COBYLA objective per iteration
+    ansatz           : "auto" | "butterfly" | "linear_chain"
     final_shots      : shot count for the one real qBraid/IonQ submission when
-                       backend="ionq_qbraid" (minimum 100). If None (default),
-                       auto-picked by ionq_qbraid_backend.default_shots() based
-                       on DEVICE_ID (5000 on the free simulator, 500 on billed
-                       real hardware). Unused otherwise.
+                       final_backend="ionq_qbraid" (minimum 100). If None
+                       (default), auto-picked by ionq_qbraid_backend.default_shots()
+                       based on DEVICE_ID (5000 on the free simulator, 500 on
+                       billed real hardware). Unused otherwise.
 
-    "ionq_qbraid": COBYLA trains locally (identical to the "qiskit" backend —
-    submitting each of the ~150+ training iterations to qBraid would be far
+    final_backend="ionq_qbraid": COBYLA trains locally regardless of sim_method
+    (submitting each of the ~150+ training iterations to qBraid would be far
     too slow/costly), then the single converged circuit is submitted to the
     qBraid-routed IonQ device (solvers/ionq_qbraid_backend.py) for the final
     shot sample, so the reported result is a real IonQ execution. See that
@@ -925,61 +766,46 @@ def run_quantum_siting(
     # ── Quantum sieve ────────────────────────────────────────────────────────
     t_q_start = time.perf_counter()
 
-    if backend in ("qiskit", "aer_tn", "ionq_qbraid"):
-        # Qiskit VQA: we wrap proxy_fn with feasibility filter via the sieve
-        # The sieve returns top candidates regardless of feasibility; we rely on
-        # run_vqa_qiskit to return them sorted by proxy_cost (feasible first via P_budget)
-        # "ionq_qbraid" trains locally (statevector, same as "qiskit") and only
-        # swaps the final shot sample onto the qBraid-routed IonQ device.
-        _sdp_ingredients = None
-        if warm_start == "sdp":
-            _sdp_ingredients = {
-                "generators": generators,
-                "batteries": batteries,
-                "demand_ref": demand_ref,
-                "T": T,
-            }
-        _sim_method = "tensor_network" if backend == "aer_tn" else "statevector"
-        _final_backend = "ionq_qbraid" if backend == "ionq_qbraid" else "local"
-        raw_candidates, convergence_trace = run_vqa_qiskit(
-            n_qubits_gen=G,
-            n_qubits_bat=n_buses,
-            proxy_fn=proxy_fn,
-            n_candidates=n_candidates,
-            warm_start=warm_start,
-            track_convergence=track_convergence,
-            _sdp_ingredients=_sdp_ingredients,
-            phase_times=runtime_phases,
-            device=device,
-            sim_method=_sim_method,
-            max_time_s=max_time_s,
-            ansatz=ansatz,
-            final_backend=_final_backend,
-            final_shots=final_shots,
-        )
+    if sim_method not in ("statevector", "tensor_network"):
+        raise ValueError(f"Unknown sim_method: {sim_method!r} (use 'statevector' or 'tensor_network')")
+    if final_backend not in ("local", "ionq_qbraid"):
+        raise ValueError(f"Unknown final_backend: {final_backend!r} (use 'local' or 'ionq_qbraid')")
 
-        # Post-filter to exactly B batteries placed (P_budget == 0)
-        feasible = [(u, s, c) for u, s, c in raw_candidates if sum(int(b) for b in s) == B]
-        if not feasible:
-            # Fall back to all candidates sorted by cost if none are exactly feasible
-            feasible = sorted(raw_candidates, key=lambda x: x[2])
-        quantum_candidates = feasible[:n_candidates]
+    # We wrap proxy_fn with feasibility filter via the sieve. The sieve
+    # returns top candidates regardless of feasibility; we rely on
+    # run_vqa_qiskit to return them sorted by proxy_cost (feasible first via
+    # P_budget). Training always runs locally regardless of final_backend;
+    # final_backend only changes where the converged circuit is sampled.
+    _sdp_ingredients = None
+    if warm_start == "sdp":
+        _sdp_ingredients = {
+            "generators": generators,
+            "batteries": batteries,
+            "demand_ref": demand_ref,
+            "T": T,
+        }
+    raw_candidates, convergence_trace = run_vqa_qiskit(
+        n_qubits_gen=G,
+        n_qubits_bat=n_buses,
+        proxy_fn=proxy_fn,
+        n_candidates=n_candidates,
+        warm_start=warm_start,
+        track_convergence=track_convergence,
+        _sdp_ingredients=_sdp_ingredients,
+        phase_times=runtime_phases,
+        sim_method=sim_method,
+        max_time_s=max_time_s,
+        ansatz=ansatz,
+        final_backend=final_backend,
+        final_shots=final_shots,
+    )
 
-    else:  # "dwave"
-        convergence_trace = []
-        bqm = build_bqm(
-            generators, batteries, n_buses, demand_ref, lambda1, lambda2,
-            congestion_signal=congestion_signal,
-        )
-        quantum_candidates = run_dwave_sa(
-            bqm=bqm,
-            n_qubits_gen=G,
-            n_qubits_bat=n_buses,
-            B=B,
-            n_candidates=n_candidates,
-            num_reads=_num_reads,
-        )
-        runtime_phases["D-Wave SA sampling"] = time.perf_counter() - t_q_start
+    # Post-filter to exactly B batteries placed (P_budget == 0)
+    feasible = [(u, s, c) for u, s, c in raw_candidates if sum(int(b) for b in s) == B]
+    if not feasible:
+        # Fall back to all candidates sorted by cost if none are exactly feasible
+        feasible = sorted(raw_candidates, key=lambda x: x[2])
+    quantum_candidates = feasible[:n_candidates]
 
     runtime_quantum = time.perf_counter() - t_q_start
 
@@ -1008,7 +834,8 @@ def run_quantum_siting(
     best = min(evaluated, key=lambda x: x[2])
 
     return QuantumSitingResult(
-        backend=backend,
+        sim_method=sim_method,
+        final_backend=final_backend,
         second_stage=second_stage,
         n_candidates=n_candidates,
         quantum_candidates=quantum_candidates,
@@ -1016,7 +843,7 @@ def run_quantum_siting(
         best=best,
         runtime_quantum=runtime_quantum,
         runtime_classical=runtime_classical,
-        warm_start=warm_start if backend in ("qiskit", "ionq_qbraid") else "zeros",
+        warm_start=warm_start,
         convergence_trace=convergence_trace if track_convergence else None,
         runtime_phases=runtime_phases,
     )

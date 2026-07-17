@@ -217,28 +217,33 @@ def print_header(
     print("=============================================")
 
 
-def prompt_quantum_options() -> tuple[str, int, str, str]:
-    """Prompt for backend, n_candidates, second_stage, warm_start."""
+def prompt_quantum_options() -> tuple[str, str, int, str, str]:
+    """Prompt for sim_method, final_backend, n_candidates, second_stage, warm_start."""
     while True:
-        print("Select quantum backend:")
-        print("  1. Qiskit (VQA, statevector simulator)")
-        print("  2. D-Wave (Simulated Annealing)")
-        print("  3. Aer Tensor Network (VQA, MPS — scales to 36+ qubits)")
-        print("  4. IonQ via qBraid (VQA trains locally, final shots on qBraid-routed IonQ)")
+        print("Select VQA backend (how training runs):")
+        print("  1. Qiskit (statevector simulator)")
+        print("  2. Aer Tensor Network (MPS — scales to 36+ qubits)")
         raw = input("Enter number: ").strip()
         if raw == "1":
-            backend = "qiskit"
+            sim_method = "statevector"
             break
         elif raw == "2":
-            backend = "dwave"
+            sim_method = "tensor_network"
             break
-        elif raw == "3":
-            backend = "aer_tn"
+        print("Invalid selection. Please enter 1 or 2.")
+
+    while True:
+        print("Sample final shots on:")
+        print("  1. Local (same simulator used for training)")
+        print("  2. IonQ via qBraid (real hardware/simulator — spends qBraid credits)")
+        raw = input("Enter number: ").strip()
+        if raw == "1":
+            final_backend = "local"
             break
-        elif raw == "4":
-            backend = "ionq_qbraid"
+        elif raw == "2":
+            final_backend = "ionq_qbraid"
             break
-        print("Invalid selection. Please enter 1, 2, 3, or 4.")
+        print("Invalid selection. Please enter 1 or 2.")
 
     while True:
         raw = input("How many candidates to evaluate classically? [default: 10]: ").strip()
@@ -267,36 +272,35 @@ def prompt_quantum_options() -> tuple[str, int, str, str]:
         print("Invalid selection. Please enter 1 or 2.")
 
     warm_start = "zeros"
-    if backend in ("qiskit", "aer_tn", "ionq_qbraid"):
-        while True:
-            print("Warm-start strategy (arXiv:2505.00145):")
-            print("  1. zeros  — theta=0, paper simulation default [default]")
-            print("  2. random — theta~Uniform[-2pi,2pi], paper IonQ hardware default")
-            print("  3. sdp    — LP-relaxation warm start, paper Section III mixer design")
-            raw = input("Enter number [default: 1]: ").strip()
-            if raw in ("", "1"):
-                warm_start = "zeros"
-                break
-            elif raw == "2":
-                warm_start = "random"
-                break
-            elif raw == "3":
-                warm_start = "sdp"
-                break
-            print("Invalid selection. Please enter 1, 2, or 3.")
+    while True:
+        print("Warm-start strategy (arXiv:2505.00145):")
+        print("  1. zeros  — theta=0, paper simulation default [default]")
+        print("  2. random — theta~Uniform[-2pi,2pi], paper IonQ hardware default")
+        print("  3. sdp    — LP-relaxation warm start, paper Section III mixer design")
+        raw = input("Enter number [default: 1]: ").strip()
+        if raw in ("", "1"):
+            warm_start = "zeros"
+            break
+        elif raw == "2":
+            warm_start = "random"
+            break
+        elif raw == "3":
+            warm_start = "sdp"
+            break
+        print("Invalid selection. Please enter 1, 2, or 3.")
 
-    return backend, n_candidates, second_stage, warm_start
+    return sim_method, final_backend, n_candidates, second_stage, warm_start
 
 
 def print_quantum_results(result: "QuantumSitingResult") -> None:
-    backend_label = {"qiskit": "Qiskit VQA", "aer_tn": "Aer TN (VQA)", "dwave": "D-Wave SA",
-                     "ionq_qbraid": "IonQ (qBraid29sim)"}.get(result.backend, result.backend)
+    sim_label = {"statevector": "Qiskit VQA", "tensor_network": "Aer TN (VQA)"}.get(
+        result.sim_method, result.sim_method)
+    backend_label = f"{sim_label} → IonQ (qBraid29sim)" if result.final_backend == "ionq_qbraid" else sim_label
     stage_label = "ED" if result.second_stage == "ed" else "UC"
 
     warm_label = {"zeros": "θ=0 (paper sim default)", "random": "θ~Uniform[-2π,2π] (paper hardware)", "sdp": "LP-relaxation (paper Sec III)"}.get(result.warm_start, result.warm_start)
     print(f"\nQuantum Siting Results ({backend_label} + {stage_label} refinement)")
-    if result.backend in ("qiskit", "ionq_qbraid"):
-        print(f"Warm-start:                {warm_label}")
+    print(f"Warm-start:                {warm_label}")
     print(f"Quantum candidates found:   {len(result.quantum_candidates)}")
     print(f"Candidates evaluated:       {len(result.evaluated)}")
     print(f"Runtime — quantum sieve:    {result.runtime_quantum:.1f}s")
@@ -519,32 +523,30 @@ def main():
         time_limit_s = float(tl) if tl else 120.0
         result = run_siting_benders(grid, generators, batteries, T, time_limit_s=time_limit_s)
     else:
-        backend, n_candidates, second_stage, warm_start = quantum_opts
-        if backend in ("qiskit", "aer_tn", "ionq_qbraid"):
-            from solvers.quantum_siting import _AER_AVAILABLE, _GPU_AVAILABLE, _AER_TN_AVAILABLE
-            if backend == "aer_tn":
-                if _AER_TN_AVAILABLE:
-                    print("Aer: tensor-network simulator available")
-                else:
-                    print("WARNING: Aer tensor-network not available — install qiskit-aer with TN support")
+        sim_method, final_backend, n_candidates, second_stage, warm_start = quantum_opts
+        from solvers.quantum_siting import _AER_AVAILABLE, _AER_TN_AVAILABLE
+        if sim_method == "tensor_network":
+            if _AER_TN_AVAILABLE:
+                print("Aer: tensor-network simulator available")
             else:
-                if _AER_AVAILABLE and _GPU_AVAILABLE:
-                    print("Aer: GPU detected — using GPU statevector")
-                elif _AER_AVAILABLE:
-                    print("Aer: no GPU — using CPU statevector")
-                else:
-                    print("Aer: not installed — using Qiskit StatevectorSampler")
-                if backend == "ionq_qbraid":
-                    from solvers.ionq_qbraid_backend import DEVICE_ID
-                    print(f"IonQ (qBraid29sim): training locally, final shots on device {DEVICE_ID!r} "
-                          "(this submits a real job and spends qBraid credits)")
-            print(f"Warm-start: {warm_start}")
+                print("WARNING: Aer tensor-network not available — install qiskit-aer with TN support")
+        else:
+            if _AER_AVAILABLE:
+                print("Aer: using CPU statevector")
+            else:
+                print("Aer: not installed — using Qiskit StatevectorSampler")
+        if final_backend == "ionq_qbraid":
+            from solvers.ionq_qbraid_backend import DEVICE_ID
+            print(f"IonQ (qBraid29sim): training locally, final shots on device {DEVICE_ID!r} "
+                  "(this submits a real job and spends qBraid credits)")
+        print(f"Warm-start: {warm_start}")
         result = run_quantum_siting(
             grid=grid,
             generators=generators,
             batteries=batteries,
             T=T,
-            backend=backend,
+            sim_method=sim_method,
+            final_backend=final_backend,
             n_candidates=n_candidates,
             second_stage=second_stage,
             warm_start=warm_start,

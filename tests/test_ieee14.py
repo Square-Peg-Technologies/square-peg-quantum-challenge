@@ -2,7 +2,7 @@
 Tests for the IEEE 14-bus use case.
 
 Fast tests cover grid structure, datacenter load injection, assets file content,
-and proxy/BQM/ansatz construction — no UC/ED solves.
+and proxy/ansatz construction — no UC/ED solves.
 Full quantum siting end-to-end is marked @pytest.mark.slow.
 """
 
@@ -53,7 +53,6 @@ _assets_dc4_mod = _load("assets_dc_bus4", "assets_dc_bus4.py", sys_modules_overr
 
 from solvers.quantum_siting import (  # noqa: E402
     build_proxy_cost_fn,
-    build_bqm,
     build_butterfly_ansatz,
     run_quantum_siting,
 )
@@ -103,13 +102,6 @@ def proxy_fn(proxy_tuple):
 def lambdas(proxy_tuple):
     return proxy_tuple[1], proxy_tuple[2]
 
-
-@pytest.fixture(scope="module")
-def bqm(demand_ref, lambdas):
-    l1, l2 = lambdas
-    return build_bqm(
-        _assets_mod.GENERATORS, _assets_mod.BATTERIES, N_BUSES, demand_ref, l1, l2
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -269,30 +261,6 @@ def test_lambdas_positive(lambdas):
 
 
 # ---------------------------------------------------------------------------
-# BQM
-# ---------------------------------------------------------------------------
-
-def test_bqm_variable_count(bqm):
-    assert len(bqm.variables) == G + N_BUSES
-
-
-def test_bqm_has_gen_variables(bqm):
-    for g in range(G):
-        assert f"u_{g}" in bqm.variables
-
-
-def test_bqm_has_siting_variables(bqm):
-    for i in range(N_BUSES):
-        assert f"s_{i}" in bqm.variables
-
-
-def test_bqm_energy_finite(bqm):
-    sample = {f"u_{g}": 1 for g in range(G)}
-    sample.update({f"s_{i}": 1 if i < B else 0 for i in range(N_BUSES)})
-    assert np.isfinite(bqm.energy(sample))
-
-
-# ---------------------------------------------------------------------------
 # Butterfly ansatz (19 qubits = 5 gen + 14 bus)
 # ---------------------------------------------------------------------------
 
@@ -325,7 +293,7 @@ def test_ieee14_quantum_siting_returns_result(grid_dc4):
         generators=_assets_dc4_mod.GENERATORS,
         batteries=_assets_dc4_mod.BATTERIES,
         T=4,
-        backend="qiskit",
+        sim_method="statevector", final_backend="local",
         n_candidates=5,
         second_stage="ed",
     )
@@ -339,7 +307,7 @@ def test_ieee14_at_least_one_candidate_survives(grid_dc4):
         generators=_assets_dc4_mod.GENERATORS,
         batteries=_assets_dc4_mod.BATTERIES,
         T=4,
-        backend="qiskit",
+        sim_method="statevector", final_backend="local",
         n_candidates=5,
         second_stage="ed",
     )
@@ -353,7 +321,7 @@ def test_ieee14_best_cost_positive(grid_dc4):
         generators=_assets_dc4_mod.GENERATORS,
         batteries=_assets_dc4_mod.BATTERIES,
         T=4,
-        backend="qiskit",
+        sim_method="statevector", final_backend="local",
         n_candidates=5,
         second_stage="ed",
     )
@@ -368,7 +336,7 @@ def test_ieee14_battery_count_correct(grid_dc4):
         generators=_assets_dc4_mod.GENERATORS,
         batteries=_assets_dc4_mod.BATTERIES,
         T=4,
-        backend="qiskit",
+        sim_method="statevector", final_backend="local",
         n_candidates=5,
         second_stage="ed",
     )

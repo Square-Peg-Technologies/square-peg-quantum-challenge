@@ -1,7 +1,6 @@
 """
 Tests for the Quantum Siting solver (solvers/quantum_siting.py).
 
-D-Wave SA tests are excluded — use test_dwave_siting.py if needed.
 Qiskit VQA end-to-end is marked @pytest.mark.slow.
 """
 
@@ -23,7 +22,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "use_cases", "p
 from assets import GENERATORS, BATTERIES  # noqa: E402
 from solvers.quantum_siting import (  # noqa: E402
     build_proxy_cost_fn,
-    build_bqm,
     build_butterfly_ansatz,
     run_quantum_siting,
 )
@@ -60,19 +58,13 @@ def lambdas(proxy_tuple):
 
 
 @pytest.fixture(scope="module")
-def bqm(lambdas):
-    l1, l2 = lambdas
-    return build_bqm(GENERATORS, BATTERIES, N_BUSES, DEMAND_REF, l1, l2)
-
-
-@pytest.fixture(scope="module")
 def qiskit_result(grid):
     return run_quantum_siting(
         grid=grid,
         generators=GENERATORS,
         batteries=BATTERIES,
         T=4,
-        backend="qiskit",
+        sim_method="statevector", final_backend="local",
         n_candidates=5,
         second_stage="ed",
     )
@@ -119,38 +111,6 @@ def test_proxy_fn_budget_penalty_for_wrong_count(proxy_fn, lambdas):
 
 
 # ---------------------------------------------------------------------------
-# build_bqm
-# ---------------------------------------------------------------------------
-
-def test_bqm_is_binary_quadratic_model(bqm):
-    import dimod
-    assert isinstance(bqm, dimod.BinaryQuadraticModel)
-    assert bqm.vartype.name == "BINARY"
-
-
-def test_bqm_has_all_variables(bqm):
-    for g in range(G):
-        assert f"u_{g}" in bqm.variables
-    for i in range(N_BUSES):
-        assert f"s_{i}" in bqm.variables
-
-
-def test_bqm_variable_count(bqm):
-    assert len(bqm.variables) == G + N_BUSES
-
-
-def test_bqm_quadratic_count(bqm):
-    expected = G * (G - 1) // 2 + N_BUSES * (N_BUSES - 1) // 2 + G * N_BUSES
-    assert len(bqm.quadratic) == expected
-
-
-def test_bqm_energy_finite(bqm):
-    sample = {f"u_{g}": 1 for g in range(G)}
-    sample.update({f"s_{i}": 1 if i < B else 0 for i in range(N_BUSES)})
-    assert np.isfinite(bqm.energy(sample))
-
-
-# ---------------------------------------------------------------------------
 # build_butterfly_ansatz
 # ---------------------------------------------------------------------------
 
@@ -182,7 +142,8 @@ def test_qiskit_returns_result(qiskit_result):
 
 @pytest.mark.slow
 def test_qiskit_backend_field(qiskit_result):
-    assert qiskit_result.backend == "qiskit"
+    assert qiskit_result.sim_method == "statevector"
+    assert qiskit_result.final_backend == "local"
 
 
 @pytest.mark.slow
@@ -233,7 +194,7 @@ def test_qiskit_uc_second_stage(grid):
         generators=GENERATORS,
         batteries=BATTERIES,
         T=2,
-        backend="qiskit",
+        sim_method="statevector", final_backend="local",
         n_candidates=3,
         second_stage="uc",
     )

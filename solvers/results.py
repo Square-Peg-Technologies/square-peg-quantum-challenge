@@ -44,7 +44,8 @@ class SitingMIPResult:
 
 @dataclass
 class QuantumSitingResult:
-    backend: str                   # "qiskit" | "dwave"
+    sim_method: str                # "statevector" | "tensor_network"
+    final_backend: str             # "local" | "ionq_qbraid"
     second_stage: str              # "ed" | "uc"
     n_candidates: int
     quantum_candidates: list       # [(u_bits, s_bits, proxy_cost), ...]
