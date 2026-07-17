@@ -229,18 +229,16 @@ Based on the IonQ/ORNL hybrid quantum-classical algorithm (arXiv:2505.00145,
 
 Standard academic test network from MATPOWER case5 (Li & Bo, 2010 IEEE PES).
 
-Network topology:
+Network topology — generator buses in orange, load buses in blue, and the
+two constrained branches in red with their MW limits (regenerate with
+`scripts/generate_pjm5_topology_diagram.py` if line limits change):
 
-    Bus 1 (Gen 0) ---[1-2, 500 MW]--- Bus 2 (load)
-       |      \                            |
-    [1-4]    [1-5]                      [2-3]
-       |          \                        |
-    Bus 4        Bus 5 (Gen 2)         Bus 3 (Gen 1, load)
-    (load)           |                     |
-                  [4-5, 350 MW]         [3-4]
-                      \___________________|
+![PJM 5-bus network topology](assets/pjm5_topology.png)
 
-Lines 1-2 (500 MW) and 4-5 (350 MW) are the only constrained lines.
+Lines 1-2 (250 MW) and 4-5 (200 MW) are the only constrained lines — these
+are the limits in `self.fbar`, the values actually enforced by the DC-OPF
+solver (the branch table's `rateA` column has unused placeholder values of
+400/240 MW for these two lines).
 
 Generators (from arXiv:2505.00145 Table I):
 
@@ -264,25 +262,11 @@ Quantum siting: 3 gen + 5 bus = 8 qubits, C(5,2) = 10 placements.
 IEEE 14-bus test system (American Electric Power, 1962, MATPOWER case14).
 Includes a synthetic 200 MW AI datacenter load added at a chosen bus.
 
-Network topology (text diagram — see `Formulation/Problem Formulation.png`
-for a rendered version):
+Network topology — generator buses in orange, load buses in blue, and the
+six tightened bottleneck branches in red with their MW limits (regenerate
+with `scripts/generate_ieee14_topology_diagram.py` if line limits change):
 
-    Bus 1 (Gen 1, DC load) ---[1-2]--- Bus 2 (Gen 2)
-     |         \                        |       \
-    [1-5]     [1-2]                  [2-3]    [2-4]
-     |                                 |         \
-    Bus 5 ----[5-6, xfmr]----       Bus 3      Bus 4
-     |         \                   (Gen 3)      |    \
-    [4-5]    Bus 6 (Gen 4)                    [4-7]  [4-9, xfmr]
-               |    |    \                     |          |
-             [6-11][6-12][6-13]             Bus 7      Bus 9
-               |     |     |               (xfmr)    /   |   \
-            Bus 11 Bus 12 Bus 13          Bus 8    [9-10][9-14][7-9]
-               |     |     |            (Gen 5)     |      |
-            [10-11][12-13][13-14]                Bus 10  Bus 14
-                           |                      |
-                        Bus 14                 [10-11]
-                                              Bus 11
+![IEEE 14-bus network topology](assets/ieee14_topology.png)
 
 Generator buses: 1, 2, 3, 6, 8
 Load buses:      2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14
