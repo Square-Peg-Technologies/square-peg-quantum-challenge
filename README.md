@@ -2,7 +2,7 @@
 
 Square Peg Technologies — PQIC Challenge
 
-[<img src="https://qbraid-static.s3.amazonaws.com/logos/Launch_on_qBraid_white.png" width="150">](https://account.qbraid.com?gitHubUrl=https://github.com/Square-Peg-Technologies/square-peg-quantum-challenge.git)
+[<img src="https://qbraid-static.s3.amazonaws.com/logos/Launch_on_qBraid_white.png" width="150">](https://account.qbraid.com?gitHubUrl=https://github.com/Square-Peg-Technologies/square-peg-quantum-challenge.git&redirectUrl=/README.md)
 
 Hybrid quantum-classical solver for battery energy storage system (BESS) siting
 on power system test grids. Everything needed to install, run, and reproduce
