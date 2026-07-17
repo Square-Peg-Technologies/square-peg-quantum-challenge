@@ -315,7 +315,7 @@ change to line limits or datacenter size:
     cd use_cases/ieee14 && python site_datacenter.py
 
 NOTE: the last regenerated ranking (T=24h) gives buses 1, 2, 3, and 4 an
-identical $228,429 cost and bus 5 at $228,755 — this has drifted from an
+identical \$228,429 cost and bus 5 at \$228,755 — this has drifted from an
 older documented ranking that showed bus 4 and bus 5 as distinctly more
 expensive with bus 3 infeasible. That older ranking predates the one-week
 demand-horizon extension; it has not been root-caused yet and needs
@@ -331,7 +331,7 @@ spatial LMP differentiation and a meaningful congestion relief signal for
 battery siting.
 
 Confirmed quantum siting result (Qiskit VQA + UC, T=24h, n=10):
-Best placement buses (2, 4, 6, 7), cost $199,804 in ~2.5 min.
+Best placement buses (2, 4, 6, 7), cost \$199,804 in ~2.5 min.
 
 ### LMP and Shadow Price Extraction
 
@@ -346,7 +346,7 @@ Outputs to `outputs/` (created automatically):
     shadow_prices_20x24.csv  Shadow price on each line for each hour (20 × 24)
     lmp_summary.csv          Per-bus LMP mean, variance, std, min, max
 
-LMPs are the nodal marginal prices ($/MWh). Shadow prices on binding lines are
+LMPs are the nodal marginal prices (\$/MWh). Shadow prices on binding lines are
 the congestion components — a bus with high PTDF exposure to a binding line has
 high congestion relief value for battery placement.
 
@@ -363,50 +363,82 @@ list. Use `assets_dc_bus4.py` or `assets_dc_bus5.py` for non-trivial output.
 
 Proxy cost function (evaluated analytically per sampled bitstring, no solver call):
 
-    Q(u, s) = c_min(u) + λ1 × P_budget(s) + λ2 × P_infeas(u) − P_loc(s)
+$$
+Q(u, s) = c_{\min}(u) + \lambda_1 P_{\text{budget}}(s) + \lambda_2 P_{\text{infeas}}(u) - P_{\text{loc}}(s)
+$$
 
-    c_min(u)      Lower-bound dispatch cost: T × Σ_g u_g × (a×p_min² + b×p_min + c)
-    P_budget(s)   (Σ s_i − B)² — penalises ≠ B batteries placed
-    P_infeas(u)   max(0, D_peak − Σ_g u_g × P_max,g)² — generator shortfall penalty
-    P_loc(s)      T × Σ_i s_i × signal_i — congestion relief reward
+$c_{\min}(u)$ — lower-bound dispatch cost:
 
-    Batteries are excluded from P_infeas: batteries shift energy across hours
-    but cannot create new peak capacity. Generator commitment alone must cover
-    peak demand.
+$$
+c_{\min}(u) = T \sum_g u_g \left(a\, p_{\min,g}^2 + b\, p_{\min,g} + c\right)
+$$
 
-    λ1 = 2 × c_min,total    (one-battery deviation costs more than max savings)
-    λ2 = 20 × c_min,total / D_peak²    (any shortfall dominates c_min savings)
+$P_{\text{budget}}(s)$ — penalises placing $\ne B$ batteries:
 
-P_loc(s) — congestion relief battery location term:
+$$
+P_{\text{budget}}(s) = \left(\sum_i s_i - B\right)^2
+$$
 
-    Before the quantum sieve, the solver runs a no-battery DC-OPF (CVXPY/HiGHS)
-    on the loaded grid to extract line shadow prices μ_l,t (20 × 24 for ieee14).
+$P_{\text{infeas}}(u)$ — generator shortfall penalty:
 
-    For each bus i:
-        signal_i = P_bat × Σ_l (−PTDF[l,i] × μ_mean,l)
+$$
+P_{\text{infeas}}(u) = \max\left(0,\ D_{\text{peak}} - \sum_g u_g\, P_{\max,g}\right)^2
+$$
 
-    where μ_mean,l is the time-averaged shadow price on line l ($/MWh), and
-    P_bat is the battery power rating (MW). Units of signal_i are $/h.
+$P_{\text{loc}}(s)$ — congestion relief reward (defined below):
 
-    Positive signal_i means a battery injection at bus i tends to reduce flow
-    on binding lines (congestion relief). Negative means it worsens congestion.
+$$
+P_{\text{loc}}(s) = T \sum_i s_i \cdot \text{signal}_i
+$$
 
-    P_loc(s) = T × Σ_i s_i × signal_i  ($/horizon)
+Batteries are excluded from $P_{\text{infeas}}$: batteries shift energy across hours
+but cannot create new peak capacity. Generator commitment alone must cover
+peak demand.
 
-    Subtracting P_loc from Q steers the quantum sieve toward buses with high
-    congestion relief value without changing the feasibility structure. The term
-    is in the same dollar units as c_min so no additional λ3 scaling is required.
+$$
+\lambda_1 = 2\, c_{\min,\text{total}} \qquad\qquad
+\lambda_2 = \frac{20\, c_{\min,\text{total}}}{D_{\text{peak}}^2}
+$$
 
-    The P_loc term is zero when no lines bind (e.g. datacenter at bus 1 or 2).
-    With the datacenter at bus 4, lines 1-5 and 2-4 bind at peak; buses 4-14
-    receive signal values of ~160-302 $/h, with bus 4 highest at ~302 $/h.
-    With the datacenter at bus 5, line 1-5 binds; buses 3-14 receive signal.
+$\lambda_1$: one-battery deviation costs more than max savings.
+$\lambda_2$: any generator shortfall dominates $c_{\min}$ savings.
 
-    If the no-battery OPF solve fails for any reason, signal defaults to zero
-    and the proxy degrades gracefully to the original three-term form.
+**$P_{\text{loc}}(s)$ — congestion relief battery location term**
 
-Qubit encoding: [u_0 ... u_{G-1}  s_0 ... s_{N-1}]
-All counts (G, N, B) are resolved from the loaded assets at runtime — nothing
+Before the quantum sieve, the solver runs a no-battery DC-OPF (CVXPY/HiGHS)
+on the loaded grid to extract line shadow prices $\mu_{l,t}$ (20 × 24 for ieee14).
+
+For each bus $i$:
+
+$$
+\text{signal}_i = P_{\text{bat}} \sum_l \left(-\text{PTDF}_{l,i} \cdot \mu_{\text{mean},l}\right)
+$$
+
+where $\mu_{\text{mean},l}$ is the time-averaged shadow price on line $l$ (\$/MWh), and
+$P_{\text{bat}}$ is the battery power rating (MW). Units of $\text{signal}_i$ are \$/h.
+
+Positive $\text{signal}_i$ means a battery injection at bus $i$ tends to reduce flow
+on binding lines (congestion relief). Negative means it worsens congestion.
+
+Subtracting $P_{\text{loc}}$ from $Q$ steers the quantum sieve toward buses with high
+congestion relief value without changing the feasibility structure. The term
+is in the same dollar units as $c_{\min}$ so no additional $\lambda_3$ scaling is required.
+
+The $P_{\text{loc}}$ term is zero when no lines bind (e.g. datacenter at bus 1 or 2).
+With the datacenter at bus 4, lines 1-5 and 2-4 bind at peak; buses 4-14
+receive signal values of ~160-302 \$/h, with bus 4 highest at ~302 \$/h.
+With the datacenter at bus 5, line 1-5 binds; buses 3-14 receive signal.
+
+If the no-battery OPF solve fails for any reason, signal defaults to zero
+and the proxy degrades gracefully to the original three-term form.
+
+Qubit encoding:
+
+$$
+[\,u_0, \ldots, u_{G-1},\ s_0, \ldots, s_{N-1}\,]
+$$
+
+All counts ($G$, $N$, $B$) are resolved from the loaded assets at runtime — nothing
 is hardcoded. Alternative asset files with different generator/battery counts
 work automatically.
 
