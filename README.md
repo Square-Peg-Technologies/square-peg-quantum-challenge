@@ -17,7 +17,6 @@ Python 3.11.12 pinned via pyenv:
     pyenv local 3.11.12
     /home/<user>/.pyenv/versions/3.11.12/bin/python -m venv .venv
     .venv/bin/pip install -r requirements.txt
-    .venv/bin/pip install -r requirements-gpu.txt  # GPU only, requires CUDA 12
 
 Always activate the venv or use `.venv/bin/python` explicitly — never system python.
 
@@ -45,7 +44,7 @@ results below in sub-tabs:
     Economic Dispatch     use case, assets, hours T
     Unit Commitment       use case, assets, hours T
     Battery Siting (MIP)  + time limit (s)
-    Quantum Siting        + backend, candidates, 2nd stage, warm start
+    Quantum Siting        + backend, sampling, candidates, 2nd stage, warm start
     Power Flow            per-candidate network diagrams (read-only gallery)
 
 Sub-tabs per problem: Results (quantum only — candidate ranking table),
@@ -53,11 +52,12 @@ Plots (all of the run's plots side by side, scaled to fit the window),
 Runtime (quantum only — phase breakdown chart), and Terminal — the exact
 CLI output including full tracebacks, with a copy button for easy debugging.
 
-The quantum backend dropdown exposes all three backends: Qiskit (GPU),
-Qiskit (CPU), Aer Tensor Network (MPS), and D-Wave SA. Selecting GPU on a
-machine without one shows a dismissible error popup and nothing runs; any
-mid-run failure pops a warning toast and the traceback lands in the Terminal
-sub-tab.
+Two independent dropdowns control the Quantum Siting run: **Backend** picks
+how the VQA trains (Qiskit local CPU statevector, or Aer Tensor Network MPS),
+and **Sampling** picks where the final shot sample comes from (Local, using
+the same simulator, or IonQ (qBraid29sim), a real qBraid-routed IonQ
+hardware/simulator submission that spends qBraid credits). Any mid-run
+failure pops a warning toast and the traceback lands in the Terminal sub-tab.
 
 Result caching — every run is recorded with its exact input settings.
 Clicking Run with settings that were already run loads the stored results
@@ -98,10 +98,13 @@ Prompt flow — Step 1, choose the optimization:
 
 For option 4 only, additional sub-prompts:
 
-    Select quantum backend:
-      1. Qiskit (VQA, statevector simulator)
-      2. D-Wave (Simulated Annealing)
-      3. Aer Tensor Network (VQA, MPS — scales to 36+ qubits)
+    Select VQA backend (how training runs):
+      1. Qiskit (statevector simulator)
+      2. Aer Tensor Network (MPS — scales to 36+ qubits)
+
+    Sample final shots on:
+      1. Local (same simulator used for training)
+      2. IonQ via qBraid (real hardware/simulator — spends qBraid credits)
 
     How many candidates to evaluate classically? [default: 10]:
 
@@ -109,7 +112,7 @@ For option 4 only, additional sub-prompts:
       1. ED dispatch (fix commitment and placement)
       2. Full UC re-solve (fix placement only)
 
-    Warm-start strategy (Qiskit and Aer TN backends only):
+    Warm-start strategy (arXiv:2505.00145):
       1. zeros  — theta=0, paper simulation default [default]
       2. random — theta~Uniform[-2pi,2pi], paper IonQ hardware default
       3. sdp    — LP-relaxation warm start, paper Section III
@@ -125,7 +128,7 @@ the case supports):
 Example output (Quantum Siting, ieee14, T=24h, `assets_dc_bus4.py`):
 
     Running Quantum Siting optimization for T=24 hours...
-    Aer: GPU detected — using GPU statevector
+    Aer: using CPU statevector
 
     Quantum Siting Results (Qiskit VQA + UC refinement)
     Quantum candidates found:   10
@@ -154,7 +157,6 @@ Example output (Quantum Siting, ieee14, T=24h, `assets_dc_bus4.py`):
     dashboard.py             Gradio browser dashboard.
     plots.py                 Network visualization + runtime breakdown charts (PNG per run).
     requirements.txt         Python dependencies, CPU-only (includes gradio for the dashboard).
-    requirements-gpu.txt     Optional GPU extras: qiskit-aer-gpu + cuQuantum/CUDA wheels.
 
     dcopf/                   Vendored grid-topology base classes (BaseCase, BaseCaseDescription)
                               — PTDF/Btilde construction from MATPOWER-style case data.
@@ -204,14 +206,16 @@ Four levels of power system optimization, all including battery storage dynamics
    cost function, producing a ranked shortlist. Each candidate is then evaluated
    with a full classical UC or ED solve.
 
-   Three quantum backends:
-   - Qiskit VQA: Butterfly ansatz (arXiv:2505.00145), COBYLA optimizer, local
-     statevector simulator. GPU-accelerated via qiskit-aer-gpu when available.
-     Compatible with IonQ Forte gate hardware.
-   - Aer Tensor Network (MPS): Linear-chain HEA ansatz, matrix product state
-     simulator. Scales to 36+ qubits (ieee30). No GPU required.
-   - D-Wave Simulated Annealing: QUBO formulation sampled with
-     SimulatedAnnealingSampler. No QPU connection required.
+   Two independent choices control the quantum sieve:
+   - VQA backend (how training runs) — Qiskit: Butterfly ansatz
+     (arXiv:2505.00145), COBYLA optimizer, local CPU statevector simulator.
+     Aer Tensor Network (MPS): Linear-chain HEA ansatz, matrix product state
+     simulator, scales to 36+ qubits (ieee30).
+   - Sampling backend (where the final shot sample comes from) — Local: same
+     simulator used for training. IonQ via qBraid: submits the converged
+     circuit for a real final shot sample on qBraid-routed IonQ
+     hardware/simulator (training still runs locally either way — Qiskit VQA
+     is compatible with IonQ Forte gate hardware).
 
 All modes use a DC power flow approximation (lossless branches, no reactive power).
 
@@ -253,7 +257,6 @@ repeated over 7 days for a one-week (168h) horizon.
 Unit 2 always runs; Unit 0 is the swing unit; Unit 1 ramps mid-day.
 
 Quantum siting: 3 gen + 5 bus = 8 qubits, C(5,2) = 10 placements.
-D-Wave SA matches classical optimum exactly (0% gap) in under 1 second.
 
 
 ### IEEE 14-Bus (ieee14)
@@ -344,7 +347,7 @@ spatial LMP differentiation and a meaningful congestion relief signal for
 battery siting.
 
 Confirmed quantum siting result (Qiskit VQA + UC, T=24h, n=10):
-Best placement buses (2, 4, 6, 7), cost $199,804 in ~2.5 min on GPU.
+Best placement buses (2, 4, 6, 7), cost $199,804 in ~2.5 min.
 
 ### LMP and Shadow Price Extraction
 
@@ -418,9 +421,6 @@ P_loc(s) — congestion relief battery location term:
     If the no-battery OPF solve fails for any reason, signal defaults to zero
     and the proxy degrades gracefully to the original three-term form.
 
-    D-Wave BQM path: the same signal is applied as a linear bias on each s_i
-    variable (−signal_i added to the BQM linear coefficient for s_i).
-
 Qubit encoding: [u_0 ... u_{G-1}  s_0 ... s_{N-1}]
 All counts (G, N, B) are resolved from the loaded assets at runtime — nothing
 is hardcoded. Alternative asset files with different generator/battery counts
@@ -433,19 +433,15 @@ Qiskit VQA path:
     COBYLA optimizer, 512 shots/iteration, up to 300 iterations
     5,000-shot final extraction, top-N candidates passed to classical stage
     Total: ~154,000 proxy evaluations (all analytical) + N UC/ED solves
-    Simulator: qiskit-aer statevector (CPU or GPU)
+    Simulator: qiskit-aer statevector (CPU)
 
 Aer Tensor Network (MPS) path:
     Linear-chain HEA ansatz, L=4 layers
     Parameters: 2 × L × (G + N)  →  214 for ieee30 (36 qubits)
     Same COBYLA optimizer and shot counts as Qiskit VQA path
     Simulator: qiskit-aer matrix_product_state — memory scales with
-    entanglement, not 2^n, enabling 36-qubit runs without GPU
+    entanglement, not 2^n, enabling 36-qubit runs on CPU
     Warm-start strategies identical to Qiskit VQA path
-
-D-Wave SA path:
-    Full QUBO: linear u, linear s, u-u, s-s, and cross u-s interaction terms
-    SimulatedAnnealingSampler, num_reads = max(2000, 10 × n_candidates)
 
 Classical second stage:
     ED mode: commitment fixed from sieve bitstring. OFF generators have
@@ -458,52 +454,14 @@ Debug log: every run writes `outputs/quantum_siting_debug.log` with all
 candidate pass/fail outcomes and error messages for post-run diagnosis.
 
 
-## CPU vs GPU Support
+## CPU-only
 
-The Qiskit VQA statevector simulation runs on either CPU or GPU. The Aer
-Tensor Network (MPS) backend runs on CPU only — its memory advantage over
-statevector makes GPU unnecessary for the qubit counts targeted here.
-Everything else (ED, UC, Siting MIP, D-Wave SA, the dashboard) is CPU-only.
-
-### CPU-only install (default)
-
-    .venv/bin/pip install -r requirements.txt
-
-Installs qiskit-aer (CPU statevector). Works on any machine, no CUDA needed.
-The VQA runs correctly but slower — expect several times the GPU wall time on
-ieee14-sized problems.
-
-### GPU install (NVIDIA + CUDA 12)
-
-    .venv/bin/pip install -r requirements.txt
-    .venv/bin/pip install -r requirements-gpu.txt
-
-`requirements-gpu.txt` installs qiskit-aer-gpu plus the cuQuantum/CUDA wheels.
-qiskit-aer-gpu replaces the CPU qiskit-aer in place (same import name), so
-install it second. Requires an NVIDIA GPU with CUDA 12.
-
-Note: qiskit-aer-gpu 0.15.x is the latest GPU build. The CPU-only
-qiskit-aer 0.17.x supports newer Qiskit versions but has no GPU equivalent yet.
-
-### Selecting the device at runtime
-
-CLI (main.py): auto-detects — uses GPU when qiskit-aer-gpu and a GPU are
-present, otherwise CPU:
-
-    Aer: GPU detected — using GPU statevector      (qiskit-aer-gpu + CUDA)
-    Aer: no GPU — using CPU statevector            (qiskit-aer, CPU only)
-    Aer: not installed — using Qiskit StatevectorSampler  (fallback)
-
-Dashboard: the backend dropdown has explicit Qiskit (GPU) and Qiskit (CPU)
-entries, so you always know which device is in use. Picking CPU forces CPU
-even on a GPU machine (useful for timing comparisons — the runtime breakdown
-chart is tagged with the backend so GPU and CPU charts coexist). Picking GPU
-on a machine without one shows an error popup and nothing runs.
-
-Programmatic: `run_quantum_siting(..., device="auto" | "GPU" | "CPU")`.
-
-At 19 qubits (ieee14): 2¹⁹ × 4 bytes = 2 MB statevector — trivial for any
-modern GPU. A typical consumer GPU runs the full VQA in ~2.5 minutes.
+Everything in this repo — ED, UC, Siting MIP, and both VQA backends (Qiskit,
+Aer Tensor Network) — trains on CPU, including when the sampling backend is
+set to IonQ via qBraid (only the final shot sample leaves the machine).
+No GPU or CUDA install is required. The Aer Tensor Network (MPS) backend's
+memory scales with entanglement rather than qubit count, which is what lets
+it reach 36+ qubits (ieee30) without needing a GPU-accelerated statevector.
 
 Always source the venv before running to ensure the venv's Qiskit build is
 used rather than any system-level installation.
@@ -516,9 +474,8 @@ used rather than any system-level installation.
     Economic Dispatch  HiGHS (QP)       < 1s            < 1s             < 1s
     Unit Commitment    SCIP (MIQP)      < 5s            < 5s             < 5s
     Battery Siting     Benders/SCIP     < 1 min         ~15s             ~30s
-    Quantum Siting     Qiskit VQA+UC    ~10s            ~2.5 min (GPU)   —
+    Quantum Siting     Qiskit VQA+UC    ~10s            ~2.5 min         —
     Quantum Siting     Aer TN (MPS)+UC  —               ~1.5 min         ~40-70s
-    Quantum Siting     D-Wave SA+UC     ~5s             ~1 min           —
 
 Quantum Siting quantum phase is independent of T; classical stage scales ~linearly
 with T and n_candidates. Figures above are measured at T=24 (one day); all
@@ -537,10 +494,11 @@ itself does not depend on T.
   optimizer: it narrows the search space analytically, then a classical
   UC/ED solve picks the winner. The quantum step's role is candidate
   generation/ranking, not final feasibility or cost evaluation.
-- All "quantum" runs are simulated (statevector, tensor-network MPS, or
-  classical simulated annealing) — no results here were produced on physical
-  QPU hardware. Qiskit VQA is compatible with IonQ Forte gate hardware but has
-  not yet been run there.
+- Training always runs on a local simulator (statevector or tensor-network
+  MPS) regardless of sampling backend — only the final shot sample can be
+  real, when the sampling backend is set to IonQ via qBraid, submitting to
+  qBraid-routed IonQ hardware/simulator. With the sampling backend left on
+  Local (the default), the entire run stays simulated.
 - ieee30 quantum siting currently has no confirmed Qiskit VQA benchmark
   (Solver Performance table above shows "—" for that cell) — only the Aer
   Tensor Network and classical paths have been timed at that scale. It runs

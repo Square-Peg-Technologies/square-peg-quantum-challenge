@@ -43,12 +43,12 @@ SETTINGS_PATH = os.path.join(OUT_DIR, "dashboard_settings.json")
 HISTORY_PATH = os.path.join(OUT_DIR, "dashboard_history.json")
 
 # Short labels so dropdowns don't get cut off; full descriptions go in info=
-BACKEND_CHOICES = ["Qiskit (GPU)", "Qiskit (CPU)", "Aer TN", "D-Wave SA", "IonQ (qBraid29sim)"]
-BACKEND_INFO = ("Qiskit = local statevector VQA on GPU or CPU · "
-                "Aer TN = tensor-network MPS (scales to 36+ qubits) · "
-                "D-Wave SA = classical simulated annealing · "
-                "IonQ (qBraid29sim) = trains locally, final shots run on qBraid-routed "
-                "IonQ hardware/simulator (spends qBraid credits)")
+BACKEND_CHOICES = ["Qiskit", "Aer TN"]
+BACKEND_INFO = "Qiskit = local CPU statevector · Aer TN = tensor-network MPS (scales to 36+ qubits)"
+SAMPLING_CHOICES = ["Local", "IonQ (qBraid29sim)"]
+SAMPLING_INFO = ("Local = same simulator as training (free) · "
+                 "IonQ (qBraid29sim) = real qBraid-routed IonQ hardware/simulator "
+                 "for the final shot sample (spends qBraid credits)")
 STAGE_CHOICES = ["ED", "UC"]
 STAGE_INFO = "ED: fix commitment + placement · UC: re-solve commitment, fix placement"
 WARM_START_CHOICES = ["zeros", "random", "sdp"]
@@ -57,9 +57,15 @@ WARM_START_INFO = ("zeros: θ=0 paper sim default · random: IonQ hardware defau
 
 # Old long labels from earlier saved settings → new short labels
 _LABEL_MIGRATION = {
-    "Qiskit (VQA, local simulator)": None,   # resolved to GPU/CPU at startup
-    "D-Wave (Simulated Annealing)": "D-Wave SA",
-    "IonQ (qBraid)": "IonQ (qBraid29sim)",
+    "Qiskit (GPU)": "Qiskit",
+    "Qiskit (CPU)": "Qiskit",
+    "Qiskit (VQA, local simulator)": "Qiskit",
+    # Old single-dropdown era had an "IonQ (qBraid29sim)" *backend* choice —
+    # that implied training via Qiskit statevector, so migrate the VQA-backend
+    # setting to "Qiskit" (the sampling setting picks up "IonQ (qBraid29sim)"
+    # on its own, since that string already matches a SAMPLING_CHOICES entry).
+    "IonQ (qBraid29sim)": "Qiskit",
+    "IonQ (qBraid)": "Qiskit",
     "ED dispatch (fix commitment and placement)": "ED",
     "Full UC re-solve (fix placement only)": "UC",
     "zeros — paper sim default": "zeros",
@@ -67,17 +73,25 @@ _LABEL_MIGRATION = {
     "sdp — LP-relaxation warm start": "sdp",
 }
 
-
-def _gpu_available() -> bool:
-    try:
-        from solvers.quantum_siting import _AER_AVAILABLE, _GPU_AVAILABLE
-        return bool(_AER_AVAILABLE and _GPU_AVAILABLE)
-    except Exception:
-        return False
+# Old long IonQ label → current canonical sampling-backend label.
+_SAMPLING_LABEL_MIGRATION = {
+    "IonQ (qBraid)": "IonQ (qBraid29sim)",
+}
 
 
 def _default_backend() -> str:
-    return "Qiskit (GPU)" if _gpu_available() else "Qiskit (CPU)"
+    return "Qiskit"
+
+
+def _default_sampling() -> str:
+    return "Local"
+
+
+def _migrate_sampling_label(value, default: str) -> str:
+    if value in SAMPLING_CHOICES:
+        return value
+    migrated = _SAMPLING_LABEL_MIGRATION.get(value)
+    return migrated if migrated in SAMPLING_CHOICES else default
 
 
 def _migrate_label(value, choices: list[str], default: str) -> str:
@@ -402,16 +416,17 @@ def _cached_siting(use_case, assets_file, T, time_limit):
     return (v[0], v[1], v[2]) if v else (_NOT_RUN, "", [])
 
 
-def _quantum_key(use_case, assets_file, T, backend_label, n_candidates,
+def _quantum_key(use_case, assets_file, T, backend_label, sampling_label, n_candidates,
                  second_stage_label, warm_start_label):
     return {"use_case": use_case, "assets_file": assets_file, "T": int(T),
-            "backend": backend_label, "n_candidates": int(n_candidates),
+            "backend": backend_label, "sampling": sampling_label,
+            "n_candidates": int(n_candidates),
             "second_stage": second_stage_label, "warm_start": warm_start_label}
 
 
-def _cached_quantum(use_case, assets_file, T, backend_label, n_candidates,
+def _cached_quantum(use_case, assets_file, T, backend_label, sampling_label, n_candidates,
                     second_stage_label, warm_start_label):
-    key = _quantum_key(use_case, assets_file, T, backend_label, n_candidates,
+    key = _quantum_key(use_case, assets_file, T, backend_label, sampling_label, n_candidates,
                        second_stage_label, warm_start_label)
     v = _cached_view("Quantum", key)
     if v is None:
@@ -595,30 +610,30 @@ def _latest_runtime_chart() -> str | None:
 
 
 def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: str,
-                    n_candidates: float, second_stage_label: str, warm_start_label: str,
-                    max_time_s: float = 300, ansatz_label: str = "Auto", force: bool = False):
+                    sampling_label: str, n_candidates: float, second_stage_label: str,
+                    warm_start_label: str, max_time_s: float = 300,
+                    ansatz_label: str = "Auto", force: bool = False):
     T = int(T)
     n_candidates = int(n_candidates)
-    if backend_label.startswith("Qiskit"):
-        backend = "qiskit"
+    if backend_label == "Qiskit":
+        sim_method = "statevector"
     elif backend_label == "Aer TN":
-        backend = "aer_tn"
-    elif backend_label == "IonQ (qBraid29sim)":
-        backend = "ionq_qbraid"
+        sim_method = "tensor_network"
     else:
-        backend = "dwave"
-    device = "GPU" if "(GPU)" in backend_label else ("CPU" if "(CPU)" in backend_label else "auto")
+        raise gr.Error(f"Unknown backend: {backend_label!r}")
+    if sampling_label == "Local":
+        final_backend = "local"
+    elif sampling_label == "IonQ (qBraid29sim)":
+        final_backend = "ionq_qbraid"
+    else:
+        raise gr.Error(f"Unknown sampling backend: {sampling_label!r}")
     second_stage = "ed" if second_stage_label.startswith("ED") else "uc"
     warm_start = warm_start_label.split(" ")[0]
     _ansatz_map = {"Auto": "auto", "Butterfly": "butterfly", "Linear-chain HEA": "linear_chain"}
     ansatz = _ansatz_map.get(ansatz_label, "auto")
 
     # Preflight: fail fast with a dismissible popup instead of a long failed run
-    if backend == "qiskit" and device == "GPU" and not _gpu_available():
-        raise gr.Error("GPU statevector is not available on this machine "
-                       "(qiskit-aer-gpu missing or no GPU detected). "
-                       "Switch the backend to Qiskit (CPU).")
-    if backend == "aer_tn":
+    if sim_method == "tensor_network":
         try:
             from solvers.quantum_siting import _AER_TN_AVAILABLE
             if not _AER_TN_AVAILABLE:
@@ -626,7 +641,7 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
                                "install qiskit-aer with tensor-network support.")
         except ImportError:
             raise gr.Error("qiskit-aer is not installed.")
-    if backend == "ionq_qbraid":
+    if final_backend == "ionq_qbraid":
         try:
             from solvers.ionq_qbraid_backend import _load_token
             _load_token()
@@ -637,14 +652,14 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
 
     _save_settings("quantum", {
         "use_case": use_case, "assets_file": assets_file, "T": T,
-        "backend": backend_label, "n_candidates": n_candidates,
+        "backend": backend_label, "sampling": sampling_label, "n_candidates": n_candidates,
         "second_stage": second_stage_label, "warm_start": warm_start_label,
         "max_time_s": float(max_time_s), "ansatz": ansatz_label,
     })
 
     if not force:
-        c = _cached_quantum(use_case, assets_file, T, backend_label, n_candidates,
-                            second_stage_label, warm_start_label)
+        c = _cached_quantum(use_case, assets_file, T, backend_label, sampling_label,
+                            n_candidates, second_stage_label, warm_start_label)
         if c[0] != _NOT_RUN:
             summary, text, plots, table, chart = c
             return (summary, text, plots, table, _load_powerflow_gallery(),
@@ -654,30 +669,29 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
 
     def solve(grid, assets_mod, loc_mod, dc_bus, dc_mw):
         from solvers.quantum_siting import run_quantum_siting, _AER_AVAILABLE, _AER_TN_AVAILABLE
-        if backend == "aer_tn":
+        if sim_method == "tensor_network":
             print("Aer tensor-network simulator (MPS)")
-            print(f"Ansatz: {ansatz_label}  |  Warm-start: {warm_start}")
-        elif backend in ("qiskit", "ionq_qbraid"):
+        else:
             if _AER_AVAILABLE:
-                print(f"Aer statevector device: {device}")
+                print("Aer statevector: CPU")
             else:
                 print("Aer: not installed — using Qiskit StatevectorSampler (CPU)")
-            print(f"Ansatz: {ansatz_label}  |  Warm-start: {warm_start}")
-            if backend == "ionq_qbraid":
-                from solvers.ionq_qbraid_backend import DEVICE_ID
-                print(f"IonQ (qBraid29sim): training locally above, final shots on device "
-                      f"{DEVICE_ID!r} (real job, spends qBraid credits)")
+        print(f"Ansatz: {ansatz_label}  |  Warm-start: {warm_start}")
+        if final_backend == "ionq_qbraid":
+            from solvers.ionq_qbraid_backend import DEVICE_ID
+            print(f"IonQ (qBraid29sim): training locally above, final shots on device "
+                  f"{DEVICE_ID!r} (real job, spends qBraid credits)")
         result = run_quantum_siting(
             grid=grid, generators=assets_mod.GENERATORS, batteries=assets_mod.BATTERIES,
-            T=T, backend=backend, n_candidates=n_candidates,
+            T=T, sim_method=sim_method, final_backend=final_backend, n_candidates=n_candidates,
             second_stage=second_stage, warm_start=warm_start, track_convergence=True,
-            device=device, max_time_s=float(max_time_s) if backend != "dwave" else None,
-            ansatz=ansatz,
+            max_time_s=float(max_time_s), ansatz=ansatz,
         )
         from plots import save_runtime_breakdown
+        _tag = backend_label if final_backend == "local" else f"{backend_label} → {sampling_label}"
         state["runtime_chart"] = save_runtime_breakdown(
             result.runtime_phases, "Quantum Siting", T, assets_file,
-            tag=backend_label)
+            tag=_tag)
 
         # Same grid + overview plots as Battery Siting, for the best placement,
         # so classical and quantum runs compare like-for-like on the dashboard.
@@ -695,8 +709,8 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
     result, text, plots, log_path = _execute("quantum", "Quantum Siting", use_case,
                                              assets_file, T, solve)
 
-    q_key = _quantum_key(use_case, assets_file, T, backend_label, n_candidates,
-                         second_stage_label, warm_start_label)
+    q_key = _quantum_key(use_case, assets_file, T, backend_label, sampling_label,
+                         n_candidates, second_stage_label, warm_start_label)
 
     if result is None:
         gr.Warning("Quantum run failed — open the Terminal sub-tab for the traceback.")
@@ -846,11 +860,17 @@ def build_app() -> gr.Blocks:
         with gr.Tab("Quantum Siting") as q_tab:
             with gr.Row():
                 q_uc, q_assets, q_T = _control_bar("quantum")
-                q_backend = gr.Dropdown(
-                    BACKEND_CHOICES,
-                    value=_migrate_label(_setting("quantum", "backend", None),
-                                         BACKEND_CHOICES, _default_backend()),
-                    label="Backend", info=BACKEND_INFO)
+                with gr.Column(min_width=200):
+                    q_backend = gr.Dropdown(
+                        BACKEND_CHOICES,
+                        value=_migrate_label(_setting("quantum", "backend", None),
+                                             BACKEND_CHOICES, _default_backend()),
+                        label="Backend", info=BACKEND_INFO)
+                    q_sampling = gr.Dropdown(
+                        SAMPLING_CHOICES,
+                        value=_migrate_sampling_label(_setting("quantum", "sampling", None),
+                                                      _default_sampling()),
+                        label="Sampling", info=SAMPLING_INFO)
                 q_ncand = gr.Slider(1, 30, value=_setting("quantum", "n_candidates", 10),
                                     step=1, label="Candidates")
                 q_stage = gr.Dropdown(
@@ -876,10 +896,10 @@ def build_app() -> gr.Blocks:
             gr.Markdown(
                 "_Suggested limits: **pjm5** → 30–60 s · **ieee14** → 60–120 s · "
                 "**ieee30 (Aer TN)** → 60–90 s (CPU MPS — longer will overheat). "
-                "Applies to the VQA optimisation loop; D-Wave SA ignores this._"
+                "Applies to the VQA optimisation loop._"
             )
             _q0 = _cached_quantum(q_uc.value, q_assets.value, q_T.value,
-                                  q_backend.value, q_ncand.value,
+                                  q_backend.value, q_sampling.value, q_ncand.value,
                                   q_stage.value, q_warm.value)
             q_summary = gr.Markdown(_q0[0])
             with gr.Tab("📋 Results"):
@@ -941,7 +961,8 @@ def build_app() -> gr.Blocks:
                      outputs=[st_summary, st_term, st_plots, hist_table])
         q_btn.click(
             run_quantum_tab,
-            inputs=[q_uc, q_assets, q_T, q_backend, q_ncand, q_stage, q_warm, q_limit, q_ansatz, q_force],
+            inputs=[q_uc, q_assets, q_T, q_backend, q_sampling, q_ncand, q_stage, q_warm,
+                   q_limit, q_ansatz, q_force],
             outputs=[q_summary, q_term, q_plots, q_table, q_pf_gallery,
                      q_runtime, hist_table],
         )

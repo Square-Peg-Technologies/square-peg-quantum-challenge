@@ -1,28 +1,18 @@
 # Dependencies for main.py, solvers/, plots.py, and the test/lint/type-check suite.
-# The local dcopf package is wired in via .venv/lib/python3.11/site-packages/dcopf_local.pth
+# The dcopf package (grid-topology base classes) is vendored in-repo at dcopf/ —
+# no external path or .pth file needed.
 #
 # To recreate the environment:
 #   pyenv local 3.11.12
 #   python -m venv .venv
 #   .venv/bin/pip install -r requirements.txt
-#   .venv/bin/pip install -r requirements-gpu.txt   # GPU machines only (CUDA 12)
-#   echo "<path-to-repo>/Tutorial/Quantum Network Flow Diagrams" \
-#     > .venv/lib/python3.11/site-packages/dcopf_local.pth
 
 # Quantum
-# GPU machines: ALSO run  pip install -r requirements-gpu.txt
-#   (installs qiskit-aer-gpu, which replaces qiskit-aer)
-# qiskit is pinned to the 1.x line, NOT the latest 2.x, because qiskit-aer-gpu
-# is stuck at 0.15.x (no newer GPU build exists) and 0.15.x only supports
-# qiskit<2.0 — see "CPU vs GPU Support" in README.md. qiskit-ibm-runtime is
-# pinned to the last version compatible with qiskit 1.x (0.47.0+ requires
-# qiskit>=2.2.0). Do not bump qiskit past 2.0 without also dropping GPU
-# support or finding a qiskit-aer-gpu release that supports it.
+# qiskit is pinned to the 1.x line; qiskit-ibm-runtime is pinned to the last
+# version compatible with qiskit 1.x (0.47.0+ requires qiskit>=2.2.0).
 qiskit==1.4.5
 qiskit-aer==0.15.1
 qiskit-ibm-runtime==0.40.1
-dimod==0.12.21
-dwave-samplers==1.7.0
 qbraid==0.12.2
 qbraid-core==0.3.6
 
