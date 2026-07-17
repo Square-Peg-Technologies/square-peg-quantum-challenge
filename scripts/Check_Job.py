@@ -2,7 +2,7 @@
 Check the status/result of a previously submitted IBM Quantum Runtime job.
 
 Usage:
-    python Check_Job.py <job_id>
+    python scripts/Check_Job.py <job_id>
 
 Requires a .env file (same as test_ibm_quantum_access.py) with:
     IQP_API_TOKEN=your_44_char_api_key
@@ -23,7 +23,7 @@ from qiskit_ibm_runtime import QiskitRuntimeService
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python Check_Job.py <job_id>")
+        print("Usage: python scripts/Check_Job.py <job_id>")
         sys.exit(1)
 
     job_id = sys.argv[1]

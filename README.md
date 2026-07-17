@@ -177,6 +177,13 @@ Example output (Quantum Siting, ieee14, T=24h, `assets_dc_bus4.py`):
 
     tests/                   Unit + integration tests (see Quality Gate above).
 
+    assets/                  Rendered network topology diagrams embedded in this README.
+    scripts/                 One-off dev/debug scripts, including the generators for the
+                              assets/ topology diagrams (generate_ieee14_topology_diagram.py,
+                              generate_pjm5_topology_diagram.py) and Check_Job.py (polls
+                              status/result/usage metrics for a submitted IBM Quantum
+                              Runtime job by ID).
+
     Formulation/
         Siting_Formulation.pdf/.tex   Problem formulation document + LaTeX source.
         IonQ_ORNL_Unit_Commitment_2505.00145.pdf   Reference paper (Aboumrad et al., 2025).
