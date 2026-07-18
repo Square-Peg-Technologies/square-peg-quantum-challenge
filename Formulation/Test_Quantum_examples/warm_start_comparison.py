@@ -62,7 +62,7 @@ def _load_use_case(name: str, path: str):
     Returns (grid, generators, batteries, gen_locs, bat_locs).
     """
     def _load_mod(mod_name: str, fpath: str):
-        # Add use-case path so intra-package imports (e.g. assets_dc_bus*.py) work
+        # Add use-case path so intra-package imports (e.g. *_dcbus*.py) work
         if path not in sys.path:
             sys.path.insert(0, path)
         spec = importlib.util.spec_from_file_location(mod_name, fpath)
@@ -71,14 +71,16 @@ def _load_use_case(name: str, path: str):
         return mod
 
     grid_mod = _load_mod(name, os.path.join(path, f"{name}.py"))
-    # Use base assets.py (no datacenter variant) for the comparison
-    assets_file = os.path.join(path, "assets.py")
-    if not os.path.exists(assets_file):
-        import glob as _glob
-        candidates = sorted(_glob.glob(os.path.join(path, "assets*.py")))
-        if not candidates:
-            raise FileNotFoundError(f"No assets*.py in {path}")
-        assets_file = candidates[0]
+    # Use the base *batt*.py file (no datacenter variant) for the comparison —
+    # the one without "dcbus" in its name, e.g. 4batt.py, 2batt.py, nobatt.py.
+    import glob as _glob
+    candidates = sorted(
+        p for p in _glob.glob(os.path.join(path, "*batt*.py"))
+        if "dcbus" not in os.path.basename(p)
+    )
+    if not candidates:
+        raise FileNotFoundError(f"No *batt*.py in {path}")
+    assets_file = candidates[0]
     assets_mod = _load_mod("assets", assets_file)
     loc_mod = _load_mod("locations", os.path.join(path, "locations.py"))
 

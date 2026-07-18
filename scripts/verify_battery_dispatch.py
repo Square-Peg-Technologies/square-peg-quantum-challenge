@@ -57,7 +57,11 @@ def load_ieee14_bus4(amplify: float = 1.0):
     """
     uc_dir = os.path.join(_PROJECT_ROOT, "use_cases", "ieee14")
     grid_mod = _load_mod("ieee14", os.path.join(uc_dir, "ieee14.py"), uc_dir)
-    assets_mod = _load_mod("assets_dc_bus4", os.path.join(uc_dir, "assets_dc_bus4.py"), uc_dir)
+    # 4batt_dcbus4.py does a bare "from assets import GENERATORS, BATTERIES" to
+    # inherit the base battery file (4batt.py) — populate sys.modules["assets"]
+    # with it first, same trick main.py's loader uses.
+    sys.modules["assets"] = _load_mod("assets", os.path.join(uc_dir, "4batt.py"), uc_dir)
+    assets_mod = _load_mod("assets_dc_bus4", os.path.join(uc_dir, "4batt_dcbus4.py"), uc_dir)
 
     grid = grid_mod.Case()
 

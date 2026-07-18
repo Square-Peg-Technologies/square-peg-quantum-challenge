@@ -1,5 +1,5 @@
 # Generator locations — identical to use_cases/ieee14/locations.py.
-# Battery location is a placeholder; the single dummy battery in assets.py
+# Battery location is a placeholder; the single dummy battery in nobatt_dcbus4.py
 # has zero power/capacity so its bus assignment has no effect.
 
 GENERATOR_LOCATIONS = {

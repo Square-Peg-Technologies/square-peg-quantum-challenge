@@ -22,7 +22,7 @@ sys.path.insert(0, _IEEE14_DIR)
 def _load(name, filename, sys_modules_overrides=None):
     """Load a use-case module from file, in isolation from other test files.
 
-    assets_dc_bus4.py (and its siblings) contain a bare `from assets import
+    4batt_dcbus4.py (and its siblings) contain a bare `from assets import
     ...`, which resolves via the real import system's sys.modules cache —
     not via this function's own `mod` — so it happily picks up whichever
     use case's "assets" some *other* test file happened to import last
@@ -48,8 +48,8 @@ def _load(name, filename, sys_modules_overrides=None):
 
 
 _ieee14_mod = _load("ieee14", "ieee14.py")
-_assets_mod = _load("assets", "assets.py")
-_assets_dc4_mod = _load("assets_dc_bus4", "assets_dc_bus4.py", sys_modules_overrides={"assets": _assets_mod})
+_assets_mod = _load("assets", "4batt.py")
+_assets_dc4_mod = _load("assets_dc_bus4", "4batt_dcbus4.py", sys_modules_overrides={"assets": _assets_mod})
 
 from solvers.quantum_siting import (  # noqa: E402
     build_proxy_cost_fn,
@@ -209,7 +209,7 @@ def test_cheap_generators_cheaper_than_expensive():
 
 
 def test_assets_dc4_imports_from_base():
-    # assets_dc_bus4.py re-exports the same data as assets.py
+    # 4batt_dcbus4.py re-exports the same data as 4batt.py
     assert _assets_dc4_mod.GENERATORS == _assets_mod.GENERATORS
     assert _assets_dc4_mod.BATTERIES == _assets_mod.BATTERIES
 
@@ -217,13 +217,14 @@ def test_assets_dc4_imports_from_base():
 def test_feasible_dc_assets_files_exist():
     # site_datacenter.py should have written assets for buses 1, 2, 4, 5
     for bus in [1, 2, 4, 5]:
-        path = os.path.join(_IEEE14_DIR, f"assets_dc_bus{bus}.py")
-        assert os.path.exists(path), f"Missing assets_dc_bus{bus}.py"
+        path = os.path.join(_IEEE14_DIR, f"4batt_dcbus{bus}.py")
+        assert os.path.exists(path), f"Missing 4batt_dcbus{bus}.py"
 
 
 def test_dc_assets_have_correct_bus():
     for bus in [1, 2, 4, 5]:
-        mod = _load(f"assets_dc_bus{bus}", f"assets_dc_bus{bus}.py")
+        mod = _load(f"assets_dc_bus{bus}", f"4batt_dcbus{bus}.py",
+                     sys_modules_overrides={"assets": _assets_mod})
         assert mod.DATACENTER_BUS == bus
         assert mod.DATACENTER_MW == 200.0
 

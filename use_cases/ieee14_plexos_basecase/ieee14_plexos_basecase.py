@@ -16,7 +16,7 @@
 # DAILY_FACTORS directly so this file stays in sync with any future changes
 # to that curve, rather than drifting again.
 #
-# Pair with assets.py in this folder (p_min matching PLEXOS's fixed/
+# Pair with nobatt_dcbus4.py in this folder (p_min matching PLEXOS's fixed/
 # min-stable-level dispatch, 200 MW flat datacenter at bus 4) to reproduce
 # his numbers.
 

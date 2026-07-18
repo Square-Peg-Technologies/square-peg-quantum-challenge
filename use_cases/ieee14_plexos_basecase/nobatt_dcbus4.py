@@ -1,6 +1,6 @@
 # PLEXOS base-case replication assets.
 #
-# p_min matches the 50/20/20/20/20 MW floor used elsewhere in ieee14/assets.py.
+# p_min matches the 50/20/20/20/20 MW floor used elsewhere in ieee14/4batt.py.
 # Andrew's PLEXOS baseline originally ran with no minimum-stable-level
 # constraint (statistical approach, p_min=0, more congestion) but switched to
 # a fixed dispatch approach as of the V5 workbook (2026-07-18 email): PLEXOS's

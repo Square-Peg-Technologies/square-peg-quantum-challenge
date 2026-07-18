@@ -295,10 +295,10 @@ def draw_uc_result(result, gen_locations: dict, bat_locations: dict, ax,
         colors, size = [], 600
         if n in gen_bus_set:
             gen_idx = [g for g, b in gen_locations.items() if b == n][0]
-            committed = result.commitment[gen_idx, -1]
-            if committed == 1:
+            ever_committed = result.commitment[gen_idx, :].max() > 0.5
+            if ever_committed:
                 colors.append(gen_node_color)
-                size = 400 + result.dispatch[gen_idx, -1] * 0.5
+                size = 400 + result.dispatch[gen_idx, :].max() * 0.5
             else:
                 colors.append("#aaaaaa")
                 size = 500
@@ -318,8 +318,8 @@ def draw_uc_result(result, gen_locations: dict, bat_locations: dict, ax,
 
     status = {}
     for gen_idx, bus in gen_locations.items():
-        committed = result.commitment[gen_idx, -1]
-        status[bus] = f"{result.dispatch[gen_idx, -1]:.0f} MW" if committed == 1 else "(off)"
+        ever_committed = result.commitment[gen_idx, :].max() > 0.5
+        status[bus] = f"peak {result.dispatch[gen_idx, :].max():.0f} MW" if ever_committed else "(off)"
     for bat_idx, bus in bat_locations.items():
         soc = result.soc[bat_idx, -1]
         status[bus] = status.get(bus, "") + (f"\n" if bus in status else "") + f"B{bat_idx} {soc:.0f}MWh"
@@ -327,8 +327,8 @@ def draw_uc_result(result, gen_locations: dict, bat_locations: dict, ax,
         status[dc_bus] = status.get(dc_bus, "") + (f"\n" if dc_bus in status else "") + f"DC {dc_mw:.0f}MW"
     _draw_labels(Gg, pos_g, ax, {n: status[n] for n in status})
 
-    gen_patch  = mpatches.Patch(color=gen_node_color,  label="Generator bus (active)")
-    off_patch  = mpatches.Patch(color="#aaaaaa",       label="Generator bus (inactive)")
+    gen_patch  = mpatches.Patch(color=gen_node_color,  label="Generator bus (used this horizon)")
+    off_patch  = mpatches.Patch(color="#aaaaaa",       label="Generator bus (never committed)")
     load_patch = mpatches.Patch(color=load_node_color, label="Load / reference bus")
     bat_patch  = mpatches.Patch(color="#2ca02c",       label="Battery bus")
     cong_patch = mpatches.Patch(color="red",           label="Congested line")
@@ -446,10 +446,10 @@ def draw_siting_panel(uc_result, gen_locations, bat_locs, grid, ax, title, subti
         colors, size = [], 500
         if n in gen_bus_set:
             g_idx = [g for g, b in gen_locations.items() if b == n][0]
-            committed = uc_result.commitment[g_idx, -1]
-            colors.append(gen_node_color if committed > 0.5 else "#aaaaaa")
-            output = uc_result.dispatch[g_idx, -1]
-            size = 400 + output * 0.5 if committed > 0.5 else 300
+            ever_committed = uc_result.commitment[g_idx, :].max() > 0.5
+            colors.append(gen_node_color if ever_committed else "#aaaaaa")
+            peak_output = uc_result.dispatch[g_idx, :].max()
+            size = 400 + peak_output * 0.5 if ever_committed else 300
         if n in bat_bus_set:
             colors.append("#2ca02c")
             size = max(size, 700)
@@ -469,9 +469,9 @@ def draw_siting_panel(uc_result, gen_locations, bat_locs, grid, ax, title, subti
     for n in Gg.nodes:
         if n in gen_bus_set:
             g_idx = [g for g, b in gen_locations.items() if b == n][0]
-            committed = uc_result.commitment[g_idx, -1]
-            output = uc_result.dispatch[g_idx, -1]
-            status[n] = f"{output:.0f}MW" if committed > 0.5 else "(off)"
+            ever_committed = uc_result.commitment[g_idx, :].max() > 0.5
+            peak_output = uc_result.dispatch[g_idx, :].max()
+            status[n] = f"peak {peak_output:.0f}MW" if ever_committed else "(off)"
         elif n in bat_bus_set:
             b_indices = [b for b, bus in bat_locs.items() if bus == n]
             status[n] = ",".join(f"B{b}" for b in b_indices)
@@ -525,8 +525,8 @@ def save_siting_comparison(siting_result, gen_locations, grid, T, assets_file,
         _topo=_topo,
     )
 
-    gen_patch  = mpatches.Patch(color=gen_node_color,  label="Generator (active)")
-    off_patch  = mpatches.Patch(color="#aaaaaa",        label="Generator (off)")
+    gen_patch  = mpatches.Patch(color=gen_node_color,  label="Generator (used this horizon)")
+    off_patch  = mpatches.Patch(color="#aaaaaa",        label="Generator (never committed)")
     load_patch = mpatches.Patch(color=load_node_color,  label="Load bus")
     bat_patch  = mpatches.Patch(color="#2ca02c",        label="Battery bus (★)")
     line_ok    = mpatches.Patch(color="#444444",        label="Line  < 70%")
@@ -616,6 +616,11 @@ def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteri
     fig, axes = plt.subplots(4, 1, figsize=(_time_axis_figwidth(T), 11), sharex=True)
     fig.suptitle(f"{opt_name} Overview | T={T}h | {assets_file}", fontsize=13, y=0.98)
 
+    real_batteries = [
+        (b, bat) for b, bat in enumerate(batteries)
+        if bat["power_mw"] > 0 or bat["capacity_mwh"] > 0
+    ]
+
     congested_hours = {t + 1 for t, lines in enumerate(result.congested_lines) if lines}
     for ax in axes:
         for h in congested_hours:
@@ -666,7 +671,7 @@ def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteri
     # panel 2: battery net MW
     ax = axes[1]
     ax.axhline(0, color="black", linewidth=0.8)
-    for b, bat in enumerate(batteries):
+    for b, bat in real_batteries:
         net = result.battery_charge[b, :T] - result.battery_discharge[b, :T]
         label = f"{bat['name']} (+charge / -discharge)"
         ax.plot(hours, net, color=bat_colors[b], linewidth=2, marker="o", markersize=4, label=label)
@@ -676,12 +681,16 @@ def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteri
                         alpha=0.25, color=bat_colors[b])
     ax.set_ylabel("MW", fontsize=10)
     ax.set_title("Battery Charge / Discharge  (positive = charging)", fontsize=10)
-    _legend_with_cong(ax, loc="upper left", fontsize=8)
+    if real_batteries:
+        _legend_with_cong(ax, loc="upper left", fontsize=8)
+    else:
+        ax.text(0.5, 0.5, "No batteries in this use case", transform=ax.transAxes,
+                ha="center", va="center", fontsize=10, color="#888888")
     ax.grid(axis="y", linestyle="--", alpha=0.35)
 
     # panel 3: battery SOC
     ax = axes[2]
-    for b, bat in enumerate(batteries):
+    for b, bat in real_batteries:
         soc = result.soc[b, :T]
         cap = bat["capacity_mwh"]
         ax.plot(hours, soc, color=bat_colors[b], linewidth=2, marker="o", markersize=4,
@@ -689,7 +698,11 @@ def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteri
         ax.axhline(cap, color=bat_colors[b], linewidth=0.8, linestyle="--", alpha=0.5)
     ax.set_ylabel("SOC (MWh)", fontsize=10)
     ax.set_title("Battery State of Charge", fontsize=10)
-    _legend_with_cong(ax, loc="upper left", fontsize=8)
+    if real_batteries:
+        _legend_with_cong(ax, loc="upper left", fontsize=8)
+    else:
+        ax.text(0.5, 0.5, "No batteries in this use case", transform=ax.transAxes,
+                ha="center", va="center", fontsize=10, color="#888888")
     ax.grid(axis="y", linestyle="--", alpha=0.35)
 
     # panel 4: hourly cost
