@@ -155,11 +155,12 @@ def _history_table() -> pd.DataFrame:
             "Use case": r.get("use_case", ""),
             "Assets": r.get("assets_file", ""),
             "T": r.get("T", ""),
+            "Backend": r.get("backend", ""),
             "Result": r.get("summary", ""),
         }
         for r in _load_history()
     ]
-    cols = ["When", "Problem", "Use case", "Assets", "T", "Result"]
+    cols = ["When", "Problem", "Use case", "Assets", "T", "Backend", "Result"]
     return pd.DataFrame(rows, columns=cols)
 
 
@@ -629,6 +630,7 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
         raise gr.Error(f"Unknown sampling backend: {sampling_label!r}")
     second_stage = "ed" if second_stage_label.startswith("ED") else "uc"
     warm_start = warm_start_label.split(" ")[0]
+    backend_tag = backend_label if sampling_label == "Local" else f"{backend_label} → {sampling_label}"
     _ansatz_map = {"Auto": "auto", "Butterfly": "butterfly", "Linear-chain HEA": "linear_chain"}
     ansatz = _ansatz_map.get(ansatz_label, "auto")
 
@@ -688,10 +690,9 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
             max_time_s=float(max_time_s), ansatz=ansatz,
         )
         from plots import save_runtime_breakdown
-        _tag = backend_label if final_backend == "local" else f"{backend_label} → {sampling_label}"
         state["runtime_chart"] = save_runtime_breakdown(
             result.runtime_phases, "Quantum Siting", T, assets_file,
-            tag=_tag)
+            tag=backend_tag)
 
         # Same grid + overview plots as Battery Siting, for the best placement,
         # so classical and quantum runs compare like-for-like on the dashboard.
@@ -715,7 +716,8 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
     if result is None:
         gr.Warning("Quantum run failed — open the Terminal sub-tab for the traceback.")
         history = _finish_run("Quantum", use_case, assets_file, T, "FAILED",
-                              log_path, plots, key=q_key)
+                              log_path, plots, key=q_key,
+                              extra={"backend": backend_tag})
         return ("### Run failed — see Terminal sub-tab", text, plots,
                 pd.DataFrame(), [], None, history)
 
@@ -742,7 +744,8 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
     history = _finish_run(
         "Quantum", use_case, assets_file, T, plain, log_path, plots, key=q_key,
         extra={"table_rows": table.to_dict("records"),
-               "runtime_chart": state.get("runtime_chart")},
+               "runtime_chart": state.get("runtime_chart"),
+               "backend": backend_tag},
     )
     return summary, text, plots, table, pf_gallery, state.get("runtime_chart"), history
 
