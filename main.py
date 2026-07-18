@@ -450,14 +450,14 @@ def print_results(
 
 
 def save_plot(result, opt_name: str, T: int, assets_file: str, grid=None,
-              generators=None, bat_locs=None, dc_bus=None, dc_mw=0.0) -> None:
+              generators=None, bat_locs=None, batteries=None, dc_bus=None, dc_mw=0.0) -> None:
     try:
         from plots import save_plot as _save_plot
     except ImportError:
         return
     try:
         _save_plot(result, opt_name, T, assets_file, grid=grid,
-                   generators=generators, bat_locs=bat_locs,
+                   generators=generators, bat_locs=bat_locs, batteries=batteries,
                    dc_bus=dc_bus, dc_mw=dc_mw)
     except Exception as e:
         print(f"Plot save failed: {e}")
@@ -572,7 +572,7 @@ def main():
 
     if not isinstance(plot_result, (SitingResult, QuantumSitingResult)):
         save_plot(plot_result, opt_name, T, assets_file_name, grid=grid,
-                  generators=generators, bat_locs=plot_bat_locs,
+                  generators=generators, bat_locs=plot_bat_locs, batteries=batteries,
                   dc_bus=dc_bus, dc_mw=dc_mw)
         save_overview(plot_result, opt_name, T, assets_file_name, generators, batteries, grid)
     elif isinstance(plot_result, SitingResult):

@@ -813,7 +813,7 @@ def save_runtime_breakdown(runtime_phases: dict, opt_name: str, T: int,
 
 
 def save_plot(result, opt_name: str, T: int, assets_file: str, grid=None,
-              generators=None, bat_locs=None, dc_bus=None, dc_mw=0.0):
+              generators=None, bat_locs=None, batteries=None, dc_bus=None, dc_mw=0.0):
     out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
     os.makedirs(out_dir, exist_ok=True)
 
@@ -827,6 +827,16 @@ def save_plot(result, opt_name: str, T: int, assets_file: str, grid=None,
         bat_locations = dict(bat_locs)
     else:
         bat_locations = {0: 2, 1: 4}  # pjm5 fallback
+
+    # Zero-power/zero-capacity batteries are placeholders (e.g. the "null"
+    # dummy in no-battery use cases, kept only so solver arrays aren't empty)
+    # — drop them here so they don't draw as a real battery bus on the plot.
+    if batteries is not None:
+        bat_locations = {
+            b: bus for b, bus in bat_locations.items()
+            if b < len(batteries)
+            and (batteries[b]["power_mw"] > 0 or batteries[b]["capacity_mwh"] > 0)
+        }
 
     _topo = _build_grid_graph(grid) if grid is not None else None
 
