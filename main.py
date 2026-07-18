@@ -578,6 +578,15 @@ def main():
     elif isinstance(plot_result, SitingResult):
         save_plot(plot_result, opt_name, T, assets_file_name, grid=grid,
                   generators=generators, dc_bus=dc_bus, dc_mw=dc_mw)
+    elif isinstance(plot_result, QuantumSitingResult):
+        if plot_result.evaluated:
+            try:
+                from plots import save_quantum_siting_gallery
+                save_quantum_siting_gallery(plot_result, gen_locs, grid, T, assets_file_name)
+            except Exception as e:
+                print(f"Quantum siting network plot failed: {e}")
+        else:
+            print("No evaluated candidates — skipping network plot.")
 
     if isinstance(result, (QuantumSitingResult, SitingMIPResult)) and result.runtime_phases:
         try:
