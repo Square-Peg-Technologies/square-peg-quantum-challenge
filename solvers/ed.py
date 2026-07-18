@@ -32,19 +32,19 @@ def run_ed(grid, generators, batteries, gen_locs, bat_locs, T):
     EDResult
     """
     PTDF = np.array(grid.PTDF)            # (6, 5)
-    fbar = np.array(grid.fbar).flatten()  # (6,)
-    demand = np.array(grid.power_demand)  # (5, T)
+    fbar = np.array(grid.fbar).flatten()
+    demand = np.array(grid.power_demand)
 
     n_gen = len(generators)
     n_bat = len(batteries)
-    n_bus = PTDF.shape[1]   # 5
+    n_bus = PTDF.shape[1]
 
     if len(set(bat_locs.values())) != len(bat_locs):
         raise ValueError(
             f"bat_locs assigns more than one battery to the same bus: {bat_locs} "
             "— only one battery per node is allowed."
         )
-    n_line = PTDF.shape[0]  # 6
+    n_line = PTDF.shape[0]
 
     # ------------------------------------------------------------------
     # Decision variables
