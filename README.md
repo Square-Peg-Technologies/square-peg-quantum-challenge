@@ -140,14 +140,14 @@ For option 4 only, additional sub-prompts:
       3. sdp    — LP-relaxation warm start, paper Section III
 
 Step 2 — use case (ieee14 / ieee30 / pjm5). Step 3 — assets file (scanned
-from the use case directory, e.g. `assets_dc_bus4.py`). Step 4 — hours,
+from the use case directory, e.g. `4batt_dcbus4.py`). Step 4 — hours,
 bounded by the loaded case's actual demand profile (all three use cases
 build a one-week, 168-hour profile, so the prompt's max scales to whatever
 the case supports):
 
     How many hours to simulate? (1-168):
 
-Example output (Quantum Siting, ieee14, T=24h, `assets_dc_bus4.py`):
+Example output (Quantum Siting, ieee14, T=24h, `4batt_dcbus4.py`):
 
     Running Quantum Siting optimization for T=24 hours...
     Aer: using CPU statevector
@@ -187,7 +187,7 @@ Example output (Quantum Siting, ieee14, T=24h, `assets_dc_bus4.py`):
     use_cases/
         pjm5/                 PJM 5-bus grid: 5 buses, 6 branches, 3 generators, 2 batteries.
         ieee14/                IEEE 14-bus grid: 14 buses, 20 branches, 5 generators, 4 batteries,
-                              optional 200 MW AI datacenter load (assets_dc_bus{N}.py).
+                              optional 200 MW AI datacenter load (4batt_dcbus{N}.py).
         ieee30/                IEEE 30-bus grid: 30 buses, 6 generators (335 MW total).
 
     solvers/
@@ -352,7 +352,7 @@ re-verifying against the current case data before being treated as
 authoritative. Re-run the script above and use its live output, not this note.
 
 IMPORTANT — for meaningful congestion and a non-trivial P_loc(s) battery signal,
-use `assets_dc_bus4.py` or `assets_dc_bus5.py`. With the datacenter at bus 1 or
+use `4batt_dcbus4.py` or `4batt_dcbus5.py`. With the datacenter at bus 1 or
 bus 2 the network is uncongested: all buses price identically and the P_loc
 term contributes zero to the proxy cost. Bus 4 and bus 5 force the optimizer
 to route power through tight transformers and mid-network lines, creating
@@ -385,7 +385,7 @@ sharing data with external tools (e.g. PLEXOS baseline comparison).
 
 Note: with the datacenter at bus 1 or bus 2 no lines bind and all shadow prices
 are zero — `extract_lmps.py` will show uniform LMPs and an empty binding-lines
-list. Use `assets_dc_bus4.py` or `assets_dc_bus5.py` for non-trivial output.
+list. Use `4batt_dcbus4.py` or `4batt_dcbus5.py` for non-trivial output.
 
 
 ## Quantum Siting — How It Works

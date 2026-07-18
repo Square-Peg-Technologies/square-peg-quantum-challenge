@@ -43,7 +43,7 @@ DEFAULT_SHOTS_SIMULATOR = 5000
 
 # Default shots on billed real hardware (e.g. Forte 1), at 3 credits/task +
 # 8 credits/shot: 500 shots = 4,003 credits (~$40 at 10,000 credits/$100).
-# Empirically (2026-07-14, ieee14/assets_dc_bus4, 24h) 500 shots already finds
+# Empirically (2026-07-14, ieee14/4batt_dcbus4, 24h) 500 shots already finds
 # the same top-ranked placement as 5000 shots; 250 shots and below is not
 # reliable (too few valid post-selected candidates). Only ~4% of a 10,000
 # credit budget per run, vs. ~40% for 5000 shots.

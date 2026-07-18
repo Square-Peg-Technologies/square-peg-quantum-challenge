@@ -32,7 +32,13 @@ import cvxpy as cp
 import csv
 
 from ieee14 import Case
-import assets_dc_bus1 as assets_mod
+import importlib
+import sys as _sys
+# 4batt_dcbus1.py does a bare "from assets import GENERATORS, BATTERIES" to
+# inherit the base battery file (4batt.py) — populate sys.modules["assets"]
+# with it first, same trick main.py's loader uses.
+_sys.modules["assets"] = importlib.import_module("4batt")
+assets_mod = importlib.import_module("4batt_dcbus1")
 
 
 def run_ed_with_duals(grid, generators, T):

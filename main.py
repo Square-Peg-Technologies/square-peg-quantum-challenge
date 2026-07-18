@@ -114,22 +114,28 @@ def load_modules(use_case_name: str, use_case_path: str, assets_path: str) -> tu
     loc_mod = importlib.util.module_from_spec(loc_spec)
     loc_spec.loader.exec_module(loc_mod)  # type: ignore[union-attr]
 
-    # Add use_case_path to sys.path so assets_dc_bus{N}.py can do "from assets import ..."
+    # Add use_case_path to sys.path so *_dcbus{N}.py variants can do "from assets import ..."
     if use_case_path not in sys.path:
         sys.path.insert(0, use_case_path)
 
-    # assets_dc_bus{N}.py variants do a bare "from assets import GENERATORS,
-    # BATTERIES" to inherit their use case's base assets.py. Python caches
-    # that under sys.modules["assets"] on first import — since every use
-    # case has its own assets.py, whichever use case's assets.py got
-    # imported FIRST in this process stays cached under that shared name and
-    # leaks into every other use case's "from assets import ..." for the
-    # rest of the process (e.g. dashboard switching from pjm5 to ieee14).
-    # Force sys.modules["assets"] to this use case's own assets.py right
-    # before loading the requested file, so the bare import always resolves
-    # to the current use case regardless of load order/history.
-    base_assets_path = os.path.join(use_case_path, "assets.py")
-    if os.path.exists(base_assets_path):
+    # *_dcbus{N}.py variants (e.g. 4batt_dcbus4.py) do a bare "from assets
+    # import GENERATORS, BATTERIES" to inherit their use case's base battery
+    # file — the one *batt*.py file in the folder without "dcbus" in its
+    # name (e.g. 4batt.py, nobatt.py, 2batt.py). Python caches that under
+    # sys.modules["assets"] on first import — since every use case has its
+    # own base file, whichever one got imported FIRST in this process stays
+    # cached under that shared name and leaks into every other use case's
+    # "from assets import ..." for the rest of the process (e.g. dashboard
+    # switching from pjm5 to ieee14). Force sys.modules["assets"] to this
+    # use case's own base file right before loading the requested file, so
+    # the bare import always resolves to the current use case regardless of
+    # load order/history.
+    base_candidates = [
+        p for p in glob.glob(os.path.join(use_case_path, "*batt*.py"))
+        if "dcbus" not in os.path.basename(p)
+    ]
+    base_assets_path = base_candidates[0] if base_candidates else None
+    if base_assets_path is not None:
         base_spec = importlib.util.spec_from_file_location("assets", base_assets_path)
         assert base_spec is not None and base_spec.loader is not None
         base_assets_mod = importlib.util.module_from_spec(base_spec)
@@ -147,12 +153,12 @@ def load_modules(use_case_name: str, use_case_path: str, assets_path: str) -> tu
 def load_use_case(use_case_name: str, use_case_path: str) -> tuple:
     """Load grid module, assets module, and locations module from a use case folder.
 
-    If multiple assets*.py files exist the user is prompted to pick one;
+    If multiple *batt*.py files exist the user is prompted to pick one;
     if only one exists it is loaded automatically.
 
     Returns (assets_file_name, grid_mod, assets_mod, loc_mod).
     """
-    found = sorted(glob.glob(os.path.join(use_case_path, "assets*.py")))
+    found = sorted(glob.glob(os.path.join(use_case_path, "*batt*.py")))
     if not found:
         print(f"No assets files found in {use_case_path}.")
         sys.exit(1)

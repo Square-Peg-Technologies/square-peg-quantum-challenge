@@ -194,7 +194,7 @@ def list_use_cases() -> list[str]:
 
 
 def list_assets(use_case: str) -> list[str]:
-    found = sorted(glob.glob(os.path.join(BASE_DIR, "use_cases", use_case, "assets*.py")))
+    found = sorted(glob.glob(os.path.join(BASE_DIR, "use_cases", use_case, "*batt*.py")))
     return [os.path.basename(p) for p in found]
 
 

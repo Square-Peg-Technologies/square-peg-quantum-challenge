@@ -14,7 +14,7 @@ spec.loader.exec_module(pjm5_mod)
 grid = pjm5_mod.Case()
 
 # Load assets
-assets_path = os.path.join(os.path.dirname(__file__), "..", "use_cases", "pjm5", "assets.py")
+assets_path = os.path.join(os.path.dirname(__file__), "..", "use_cases", "pjm5", "2batt.py")
 assets_spec = importlib.util.spec_from_file_location("assets", assets_path)
 assets_mod = importlib.util.module_from_spec(assets_spec)
 assets_spec.loader.exec_module(assets_mod)
