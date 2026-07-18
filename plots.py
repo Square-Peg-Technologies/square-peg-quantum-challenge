@@ -85,8 +85,9 @@ for fbus, tbus, _ in branches:
 
 pos = nx.kamada_kawai_layout(G)
 
-gen_node_color  = "#e05c3a"
-load_node_color = "#5b8dd9"
+gen_node_color   = "#e05c3a"
+load_node_color  = "#5b8dd9"
+outage_node_color = "#8e44ad"  # forced outage (contingency), distinct from active/grey/battery/line colors
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +278,7 @@ def draw_ed_result(result, gen_locations: dict, bat_locations: dict, ax,
 
 
 def draw_uc_result(result, gen_locations: dict, bat_locations: dict, ax,
-                   _topo=None, dc_bus=None, dc_mw=0.0, load_buses=None):
+                   _topo=None, dc_bus=None, dc_mw=0.0, load_buses=None, outages=None):
     if _topo is None:
         Gg, pos_g, branches_list = G, pos, branches
     else:
@@ -295,8 +296,12 @@ def draw_uc_result(result, gen_locations: dict, bat_locations: dict, ax,
         colors, size = [], 600
         if n in gen_bus_set:
             gen_idx = [g for g, b in gen_locations.items() if b == n][0]
+            has_outage = bool(outages and gen_idx in outages and len(outages[gen_idx]) > 0)
             ever_committed = result.commitment[gen_idx, :].max() > 0.5
-            if ever_committed:
+            if has_outage:
+                colors.append(outage_node_color)
+                size = 400 + result.dispatch[gen_idx, :].max() * 0.5 if ever_committed else 500
+            elif ever_committed:
                 colors.append(gen_node_color)
                 size = 400 + result.dispatch[gen_idx, :].max() * 0.5
             else:
@@ -319,7 +324,11 @@ def draw_uc_result(result, gen_locations: dict, bat_locations: dict, ax,
     status = {}
     for gen_idx, bus in gen_locations.items():
         ever_committed = result.commitment[gen_idx, :].max() > 0.5
-        status[bus] = f"peak {result.dispatch[gen_idx, :].max():.0f} MW" if ever_committed else "(off)"
+        has_outage = bool(outages and gen_idx in outages and len(outages[gen_idx]) > 0)
+        label = f"peak {result.dispatch[gen_idx, :].max():.0f} MW" if ever_committed else "(off)"
+        if has_outage:
+            label += f"\noutage {len(outages[gen_idx])}h"
+        status[bus] = label
     for bat_idx, bus in bat_locations.items():
         soc = result.soc[bat_idx, -1]
         status[bus] = status.get(bus, "") + (f"\n" if bus in status else "") + f"B{bat_idx} {soc:.0f}MWh"
@@ -327,12 +336,15 @@ def draw_uc_result(result, gen_locations: dict, bat_locations: dict, ax,
         status[dc_bus] = status.get(dc_bus, "") + (f"\n" if dc_bus in status else "") + f"DC {dc_mw:.0f}MW"
     _draw_labels(Gg, pos_g, ax, {n: status[n] for n in status})
 
-    gen_patch  = mpatches.Patch(color=gen_node_color,  label="Generator bus (used this horizon)")
-    off_patch  = mpatches.Patch(color="#aaaaaa",       label="Generator bus (never committed)")
-    load_patch = mpatches.Patch(color=load_node_color, label="Load / reference bus")
-    bat_patch  = mpatches.Patch(color="#2ca02c",       label="Battery bus")
-    cong_patch = mpatches.Patch(color="red",           label="Congested line")
+    gen_patch    = mpatches.Patch(color=gen_node_color,    label="Generator bus (used this horizon)")
+    off_patch    = mpatches.Patch(color="#aaaaaa",         label="Generator bus (never committed)")
+    outage_patch = mpatches.Patch(color=outage_node_color, label="Generator bus (forced outage)")
+    load_patch   = mpatches.Patch(color=load_node_color,   label="Load / reference bus")
+    bat_patch    = mpatches.Patch(color="#2ca02c",         label="Battery bus")
+    cong_patch   = mpatches.Patch(color="red",             label="Congested line")
     handles = [gen_patch, off_patch, load_patch, bat_patch, cong_patch]
+    if outages:
+        handles.insert(2, outage_patch)
     if dc_bus is not None and dc_mw > 0:
         from matplotlib.lines import Line2D
         handles.append(Line2D([0], [0], marker="o", color="w", markerfacecolor="none",
@@ -826,7 +838,8 @@ def save_runtime_breakdown(runtime_phases: dict, opt_name: str, T: int,
 
 
 def save_plot(result, opt_name: str, T: int, assets_file: str, grid=None,
-              generators=None, bat_locs=None, batteries=None, dc_bus=None, dc_mw=0.0):
+              generators=None, bat_locs=None, batteries=None, dc_bus=None, dc_mw=0.0,
+              outages=None):
     out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
     os.makedirs(out_dir, exist_ok=True)
 
@@ -862,7 +875,8 @@ def save_plot(result, opt_name: str, T: int, assets_file: str, grid=None,
     elif hasattr(result, "commitment"):
         fig, ax = plt.subplots(figsize=(10, 8))
         draw_uc_result(result, gen_locations, bat_locations, ax, _topo=_topo,
-                       dc_bus=dc_bus, dc_mw=dc_mw, load_buses=_grid_load_buses(grid))
+                       dc_bus=dc_bus, dc_mw=dc_mw, load_buses=_grid_load_buses(grid),
+                       outages=outages)
     else:
         fig, ax = plt.subplots(figsize=(10, 8))
         draw_ed_result(result, gen_locations, bat_locations, ax, _topo=_topo,

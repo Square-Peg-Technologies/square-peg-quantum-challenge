@@ -62,3 +62,7 @@ BATTERIES = [
 
 DATACENTER_BUS: int | None = None
 DATACENTER_MW: float = 0.0
+
+# Optional {gen_index: set of 0-indexed hours} forcing a generator offline for
+# a contingency scenario (see 4batt_g2out.py). None here = runs normally.
+OUTAGES: dict[int, set[int]] | None = None
