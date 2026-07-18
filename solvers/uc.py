@@ -4,7 +4,7 @@ import cvxpy as cp
 from .results import UCResult
 
 
-def run_uc(grid, generators, batteries, bat_locs, T):
+def run_uc(grid, generators, batteries, bat_locs, T, outages=None):
     """Unit Commitment MIQP solver using CVXPY with SCIP.
 
     Parameters
@@ -14,6 +14,11 @@ def run_uc(grid, generators, batteries, bat_locs, T):
     batteries  : list of dicts (name, power_mw, capacity_mwh, efficiency, init_soc)
     bat_locs   : dict {bat_index: bus_number}  (1-indexed buses)
     T          : number of time steps
+    outages    : optional dict {gen_index: set of 0-indexed hours} forcing that
+                 generator offline (u[g,t] == 0) for the listed hours — models a
+                 contingency (e.g. a documented single-generator-loss event)
+                 rather than an economic commitment decision. Hours beyond T are
+                 silently ignored. Defaults to no outages.
 
     Returns
     -------
@@ -80,6 +85,9 @@ def run_uc(grid, generators, batteries, bat_locs, T):
             # output bounds with commitment
             constraints.append(p[g, t] >= p_min * u[g, t])
             constraints.append(p[g, t] <= p_max * u[g, t])
+            # forced outage: contingency, not an economic commitment choice
+            if outages and g in outages and t in outages[g]:
+                constraints.append(u[g, t] == 0)
             # startup indicator: v[g,t] >= u[g,t] - u[g,t-1]
             if t == 0:
                 constraints.append(v[g, t] >= u[g, t])

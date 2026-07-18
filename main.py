@@ -118,21 +118,29 @@ def load_modules(use_case_name: str, use_case_path: str, assets_path: str) -> tu
     if use_case_path not in sys.path:
         sys.path.insert(0, use_case_path)
 
-    # *_dcbus{N}.py variants (e.g. 4batt_dcbus4.py) do a bare "from assets
-    # import GENERATORS, BATTERIES" to inherit their use case's base battery
-    # file — the one *batt*.py file in the folder without "dcbus" in its
-    # name (e.g. 4batt.py, nobatt.py, 2batt.py). Python caches that under
-    # sys.modules["assets"] on first import — since every use case has its
-    # own base file, whichever one got imported FIRST in this process stays
-    # cached under that shared name and leaks into every other use case's
-    # "from assets import ..." for the rest of the process (e.g. dashboard
-    # switching from pjm5 to ieee14). Force sys.modules["assets"] to this
-    # use case's own base file right before loading the requested file, so
-    # the bare import always resolves to the current use case regardless of
-    # load order/history.
+    # Derived variants (e.g. 4batt_dcbus4.py, 4batt_g2out.py) do a bare "from
+    # assets import GENERATORS, BATTERIES" to inherit their use case's base
+    # battery file. The base file is identified by content, not name — it's
+    # the one *batt*.py file that does NOT itself do "from assets import"
+    # (i.e. it defines GENERATORS/BATTERIES directly rather than inheriting
+    # them). This stays correct no matter how many derived variants exist
+    # (dc-bus siting, outage scenarios, or combinations of both) since only
+    # one file per use case can be the actual source of the data. Python
+    # caches the load under sys.modules["assets"] on first import — since
+    # every use case has its own base file, whichever one got imported FIRST
+    # in this process stays cached under that shared name and leaks into
+    # every other use case's "from assets import ..." for the rest of the
+    # process (e.g. dashboard switching from pjm5 to ieee14). Force
+    # sys.modules["assets"] to this use case's own base file right before
+    # loading the requested file, so the bare import always resolves to the
+    # current use case regardless of load order/history.
+    def _is_base_assets_file(path):
+        with open(path) as f:
+            return "from assets import" not in f.read()
+
     base_candidates = [
         p for p in glob.glob(os.path.join(use_case_path, "*batt*.py"))
-        if "dcbus" not in os.path.basename(p)
+        if _is_base_assets_file(p)
     ]
     base_assets_path = base_candidates[0] if base_candidates else None
     if base_assets_path is not None:
@@ -456,7 +464,8 @@ def print_results(
 
 
 def save_plot(result, opt_name: str, T: int, assets_file: str, grid=None,
-              generators=None, bat_locs=None, batteries=None, dc_bus=None, dc_mw=0.0) -> None:
+              generators=None, bat_locs=None, batteries=None, dc_bus=None, dc_mw=0.0,
+              outages=None) -> None:
     try:
         from plots import save_plot as _save_plot
     except ImportError:
@@ -464,7 +473,7 @@ def save_plot(result, opt_name: str, T: int, assets_file: str, grid=None,
     try:
         _save_plot(result, opt_name, T, assets_file, grid=grid,
                    generators=generators, bat_locs=bat_locs, batteries=batteries,
-                   dc_bus=dc_bus, dc_mw=dc_mw)
+                   dc_bus=dc_bus, dc_mw=dc_mw, outages=outages)
     except Exception as e:
         print(f"Plot save failed: {e}")
 
@@ -503,6 +512,9 @@ def main():
     if dc_bus is not None and dc_mw > 0:
         grid.power_demand[dc_bus - 1, :] += dc_mw
 
+    # Forced generator outage (contingency scenario) if the assets file specifies one
+    outages = getattr(assets_mod, "OUTAGES", None)
+
     generators = assets_mod.GENERATORS
     batteries = assets_mod.BATTERIES
     gen_locs = loc_mod.GENERATOR_LOCATIONS
@@ -523,7 +535,7 @@ def main():
     if opt == 1:
         result = run_ed(grid, generators, batteries, gen_locs, bat_locs, T)
     elif opt == 2:
-        result = run_uc(grid, generators, batteries, bat_locs, T)
+        result = run_uc(grid, generators, batteries, bat_locs, T, outages=outages)
     elif opt == 3:
         tl = input("Time limit in seconds (default 120): ").strip()
         time_limit_s = float(tl) if tl else 120.0
@@ -579,7 +591,7 @@ def main():
     if not isinstance(plot_result, (SitingResult, QuantumSitingResult)):
         save_plot(plot_result, opt_name, T, assets_file_name, grid=grid,
                   generators=generators, bat_locs=plot_bat_locs, batteries=batteries,
-                  dc_bus=dc_bus, dc_mw=dc_mw)
+                  dc_bus=dc_bus, dc_mw=dc_mw, outages=outages)
         save_overview(plot_result, opt_name, T, assets_file_name, generators, batteries, grid)
     elif isinstance(plot_result, SitingResult):
         save_plot(plot_result, opt_name, T, assets_file_name, grid=grid,

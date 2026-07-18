@@ -488,12 +488,13 @@ def run_uc_tab(use_case: str, assets_file: str, T: float, force: bool = False):
 
     def solve(grid, assets_mod, loc_mod, dc_bus, dc_mw):
         from solvers.uc import run_uc
+        outages = getattr(assets_mod, "OUTAGES", None)
         result = run_uc(grid, assets_mod.GENERATORS, assets_mod.BATTERIES,
-                        loc_mod.BATTERY_LOCATIONS, T)
+                        loc_mod.BATTERY_LOCATIONS, T, outages=outages)
         cli.save_plot(result, "UC", T, assets_file, grid=grid,
                       generators=assets_mod.GENERATORS,
                       bat_locs=loc_mod.BATTERY_LOCATIONS, batteries=assets_mod.BATTERIES,
-                      dc_bus=dc_bus, dc_mw=dc_mw)
+                      dc_bus=dc_bus, dc_mw=dc_mw, outages=outages)
         cli.save_overview(result, "UC", T, assets_file,
                           assets_mod.GENERATORS, assets_mod.BATTERIES, grid)
         return result
