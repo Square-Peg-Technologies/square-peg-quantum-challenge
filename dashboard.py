@@ -459,7 +459,8 @@ def run_ed_tab(use_case: str, assets_file: str, T: float, force: bool = False):
                         loc_mod.GENERATOR_LOCATIONS, loc_mod.BATTERY_LOCATIONS, T)
         cli.save_plot(result, "ED", T, assets_file, grid=grid,
                       generators=assets_mod.GENERATORS,
-                      bat_locs=loc_mod.BATTERY_LOCATIONS, dc_bus=dc_bus, dc_mw=dc_mw)
+                      bat_locs=loc_mod.BATTERY_LOCATIONS, batteries=assets_mod.BATTERIES,
+                      dc_bus=dc_bus, dc_mw=dc_mw)
         cli.save_overview(result, "ED", T, assets_file,
                           assets_mod.GENERATORS, assets_mod.BATTERIES, grid)
         return result
@@ -491,7 +492,8 @@ def run_uc_tab(use_case: str, assets_file: str, T: float, force: bool = False):
                         loc_mod.BATTERY_LOCATIONS, T)
         cli.save_plot(result, "UC", T, assets_file, grid=grid,
                       generators=assets_mod.GENERATORS,
-                      bat_locs=loc_mod.BATTERY_LOCATIONS, dc_bus=dc_bus, dc_mw=dc_mw)
+                      bat_locs=loc_mod.BATTERY_LOCATIONS, batteries=assets_mod.BATTERIES,
+                      dc_bus=dc_bus, dc_mw=dc_mw)
         cli.save_overview(result, "UC", T, assets_file,
                           assets_mod.GENERATORS, assets_mod.BATTERIES, grid)
         return result
@@ -530,7 +532,8 @@ def run_siting_tab(use_case: str, assets_file: str, T: float, time_limit: float,
         plot_bat_locs = result.bat_locs if isinstance(result, SitingMIPResult) else loc_mod.BATTERY_LOCATIONS
         cli.save_plot(plot_result, "Siting", T, assets_file, grid=grid,
                       generators=assets_mod.GENERATORS,
-                      bat_locs=plot_bat_locs, dc_bus=dc_bus, dc_mw=dc_mw)
+                      bat_locs=plot_bat_locs, batteries=assets_mod.BATTERIES,
+                      dc_bus=dc_bus, dc_mw=dc_mw)
         cli.save_overview(plot_result, "Siting", T, assets_file,
                           assets_mod.GENERATORS, assets_mod.BATTERIES, grid)
         return result
@@ -699,7 +702,7 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
         best_locs, _best_commit, _best_cost, best_res = result.best
         cli.save_plot(best_res, "Quantum", T, assets_file, grid=grid,
                       generators=assets_mod.GENERATORS, bat_locs=best_locs,
-                      dc_bus=dc_bus, dc_mw=dc_mw)
+                      batteries=assets_mod.BATTERIES, dc_bus=dc_bus, dc_mw=dc_mw)
         cli.save_overview(best_res, "Quantum", T, assets_file,
                           assets_mod.GENERATORS, assets_mod.BATTERIES, grid)
 
@@ -979,17 +982,40 @@ _THEME = gr.themes.Default(
     neutral_hue="slate",
     font=[gr.themes.GoogleFont("Inter"), "Segoe UI", "system-ui", "sans-serif"],
 ).set(
+    # Every light-mode value below has a matching _dark override so the
+    # dashboard looks identical regardless of the browser/OS reporting
+    # prefers-color-scheme: dark (Gradio otherwise falls back to its own
+    # built-in dark palette for any variable left unset, producing a mixed
+    # light/dark render — near-black blocks behind still-white plot PNGs,
+    # and unselected tab labels using a dark-on-dark default text color
+    # that's invisible until :hover changes it).
     body_background_fill="#f8fafc",
+    body_background_fill_dark="#f8fafc",
+    body_text_color="#0f172a",
+    body_text_color_dark="#0f172a",
+    body_text_color_subdued="#64748b",
+    body_text_color_subdued_dark="#64748b",
     block_background_fill="#ffffff",
+    block_background_fill_dark="#ffffff",
     block_border_color="#e2e8f0",
+    block_border_color_dark="#e2e8f0",
     block_shadow="0 1px 2px rgba(0,0,0,0.04)",
     block_label_text_color="#64748b",
+    block_label_text_color_dark="#64748b",
+    block_title_text_color="#0f172a",
+    block_title_text_color_dark="#0f172a",
     button_primary_background_fill="#0d9488",
+    button_primary_background_fill_dark="#0d9488",
     button_primary_background_fill_hover="#0f766e",
+    button_primary_background_fill_hover_dark="#0f766e",
     button_primary_text_color="#ffffff",
+    button_primary_text_color_dark="#ffffff",
+    button_secondary_text_color="#0f172a",
+    button_secondary_text_color_dark="#0f172a",
 )
 
 _CSS = """
+:root { color-scheme: light; }
 .gradio-container { background: #f8fafc; }
 h1 { color: #0f172a; }
 button.selected { color: #0d9488 !important; }
@@ -1010,6 +1036,27 @@ label span, .block-label { text-transform: uppercase; letter-spacing: 0.3px;
 .gradio-container h1 { margin: 4px 0 8px; font-size: 22px; }
 """
 
+# Gradio's frontend only skips its own light/dark auto-detection
+# (window.matchMedia("(prefers-color-scheme: dark)")) when the page URL
+# already carries a "__theme" query param. Without it, dark mode depends on
+# what the browser reports for that media query — which varies (e.g. some
+# browsers' anti-fingerprinting protections normalize it, others pass the
+# real OS preference through), so the same _THEME/_CSS can render
+# differently across browsers. Forcing "__theme=light" in the URL via a
+# <head> redirect (runs before Gradio's own bundle mounts) makes the
+# dashboard render identically everywhere, matching our light-only design.
+_FORCE_LIGHT_THEME_HEAD = """
+<script>
+(function () {
+  var url = new URL(window.location.href);
+  if (url.searchParams.get("__theme") !== "light") {
+    url.searchParams.set("__theme", "light");
+    window.location.replace(url.toString());
+  }
+})();
+</script>
+"""
+
 if __name__ == "__main__":
     build_app().launch(server_name="127.0.0.1", server_port=7860, show_error=True,
-                       theme=_THEME, css=_CSS)
+                       theme=_THEME, css=_CSS, head=_FORCE_LIGHT_THEME_HEAD)

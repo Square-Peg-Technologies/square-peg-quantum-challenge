@@ -3,31 +3,35 @@
 # Same network as use_cases/ieee14 (MATPOWER case14: buses, branches, PTDFs,
 # generator buses/costs all identical — verified against the PLEXOS PTDF
 # sheet to 4 decimal places). The only thing that changes here is the daily
-# demand shape, back-solved from the "Load by Node (Output)" tab of the
-# colleague's "No Batteries, No Line Losses, Base Case.xlsx" PLEXOS export
-# (each hour's node loads divide out to a clean 2-decimal fraction of the
-# MATPOWER base Pd, e.g. bus 3: 60.29 / 94.2 = 0.6400 at hour 0).
+# demand shape.
 #
-# Pair with assets.py in this folder (p_min=0 on all generators, 200 MW flat
-# datacenter at bus 4) to reproduce his numbers — see
-# docs/plexos_comparison/Comparison_Summary.md for the full writeup.
+# PLEXOS_FACTORS previously held a curve back-solved from the "Load by Node
+# (Output)" tab of an early, pre-V2 "No Batteries, No Line Losses, Base
+# Case.xlsx" PLEXOS export (flatter, 0.56x-0.99x, peaking at hour 10/20).
+# That export used a different, since-superseded demand shape — Andrew's
+# PLEXOS output has matched use_cases/ieee14/ieee14.py's DAILY_FACTORS curve
+# since the V2 workbook (confirmed 2026-07-14, reconfirmed against V5's
+# "Hourly Load Multipliers" tab 2026-07-18, which is DAILY_FACTORS
+# algebraically renormalized to a 1.0 peak). PLEXOS_FACTORS now mirrors
+# DAILY_FACTORS directly so this file stays in sync with any future changes
+# to that curve, rather than drifting again.
+#
+# Pair with assets.py in this folder (p_min matching PLEXOS's fixed/
+# min-stable-level dispatch, 200 MW flat datacenter at bus 4) to reproduce
+# his numbers.
 
 from dcopf.cases.base import BaseCase, BaseCaseDescription
 import numpy as np
 
-# Hourly factors back-solved from the PLEXOS "Load by Node (Output)" sheet
-# (base Pd x factor = his reported node load, all 14 nodes, all 24 hours).
-# Contrast with use_cases/ieee14/ieee14.py's DAILY_FACTORS — that curve has
-# a much deeper night valley (0.45x) and a higher midday peak (1.40x); this
-# one is flatter throughout (0.56x-0.99x), peaking earlier (hour 10 vs 13).
+# Mirrors use_cases/ieee14/ieee14.py's DAILY_FACTORS (single-day slice).
 PLEXOS_FACTORS = [
-    0.64, 0.60, 0.58, 0.56, 0.56, 0.62,  # hours 0-5:  night
-    0.74, 0.86, 0.95, 0.98, 0.99, 0.98,  # hours 6-11: morning ramp
-    0.95, 0.95, 0.93, 0.92, 0.90, 0.92,  # hours 12-17: midday/afternoon
-    0.96, 0.98, 0.99, 0.90, 0.78, 0.70,  # hours 18-23: evening ramp-down
+    0.45, 0.45, 0.45, 0.50, 0.55, 0.65,  # hours 0-5:  night
+    0.80, 0.90, 1.00, 1.10, 1.20, 1.30,  # hours 6-11: morning ramp
+    1.35, 1.40, 1.35, 1.30, 1.20, 1.10,  # hours 12-17: midday/afternoon
+    1.00, 0.90, 0.80, 0.70, 0.60, 0.50,  # hours 18-23: evening ramp-down
 ]
 
-T = 24  # single-day PLEXOS export — not extended to a week
+T = 24  # single-day slice; use ieee14/ieee14.py directly for the 168h week
 
 
 class Case(BaseCase):
