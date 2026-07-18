@@ -620,6 +620,17 @@ def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteri
     for ax in axes:
         for h in congested_hours:
             ax.axvspan(h - 0.5, h + 0.5, color="#ffcccc", alpha=0.5, zorder=0)
+    # Pale red background = congested hour. axvspan alone doesn't register with
+    # ax.legend(), so add an explicit patch to every panel's legend (not just a
+    # corner text note on panel 1) — the shading is applied to all four axes,
+    # so each one needs its own explanation of what it means.
+    cong_patch = mpatches.Patch(color="#ffcccc", alpha=0.5, label="Congested hour") if congested_hours else None
+
+    def _legend_with_cong(ax, **kwargs):
+        handles, labels = ax.get_legend_handles_labels()
+        if cong_patch is not None:
+            handles.append(cong_patch)
+        ax.legend(handles=handles, **kwargs)
 
     # panel 1: generator dispatch
     ax = axes[0]
@@ -649,7 +660,7 @@ def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteri
 
     ax.set_ylabel("Output (MW)", fontsize=10)
     ax.set_title("Generator Dispatch" + (" (dashed = OFF)" if is_uc else ""), fontsize=10)
-    ax.legend(loc="upper left", fontsize=8, ncol=2)
+    _legend_with_cong(ax, loc="upper left", fontsize=8, ncol=2)
     ax.grid(axis="y", linestyle="--", alpha=0.35)
 
     # panel 2: battery net MW
@@ -665,7 +676,7 @@ def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteri
                         alpha=0.25, color=bat_colors[b])
     ax.set_ylabel("MW", fontsize=10)
     ax.set_title("Battery Charge / Discharge  (positive = charging)", fontsize=10)
-    ax.legend(loc="upper left", fontsize=8)
+    _legend_with_cong(ax, loc="upper left", fontsize=8)
     ax.grid(axis="y", linestyle="--", alpha=0.35)
 
     # panel 3: battery SOC
@@ -678,7 +689,7 @@ def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteri
         ax.axhline(cap, color=bat_colors[b], linewidth=0.8, linestyle="--", alpha=0.5)
     ax.set_ylabel("SOC (MWh)", fontsize=10)
     ax.set_title("Battery State of Charge", fontsize=10)
-    ax.legend(loc="upper left", fontsize=8)
+    _legend_with_cong(ax, loc="upper left", fontsize=8)
     ax.grid(axis="y", linestyle="--", alpha=0.35)
 
     # panel 4: hourly cost
@@ -686,6 +697,8 @@ def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteri
     ax.bar(hours, result.hourly_costs[:T], color="#7f7f7f", alpha=0.75, width=max(0.15, min(0.7, 60.0 / max(T, 1))))
     ax.set_ylabel("Cost ($)", fontsize=10)
     ax.set_title("Hourly Generation Cost", fontsize=10)
+    if cong_patch is not None:
+        ax.legend(handles=[cong_patch], loc="upper left", fontsize=8)
     ax.grid(axis="y", linestyle="--", alpha=0.35)
 
     if congested_hours:
