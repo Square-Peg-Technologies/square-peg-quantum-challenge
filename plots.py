@@ -1,6 +1,7 @@
 import os
 import textwrap
 import networkx as nx
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
@@ -545,6 +546,57 @@ def save_siting_comparison(siting_result, gen_locations, grid, T, assets_file,
     plt.close(fig)
     print(f"Plot saved: {filename}")
     return filename
+
+
+class _CommitShim:
+    """Wrap an ED/siting result with a fixed commitment matrix so
+    draw_siting_panel (which expects a `.commitment` attribute, as UC
+    results have) also works for ED-refined quantum-siting candidates."""
+
+    def __init__(self, result, commitment_list, T):
+        self._r = result
+        self.commitment = np.tile(np.array(commitment_list).reshape(-1, 1), (1, T))
+
+    def __getattr__(self, name):
+        return getattr(self._r, name)
+
+
+def save_quantum_siting_gallery(result, gen_locations, grid, T, assets_file,
+                                out_dir=None):
+    """One network diagram per evaluated quantum-siting candidate, ranked by
+    true cost — same panel (generator outputs, battery SOC, congested lines)
+    as options 1-3, mirroring the dashboard's Power Flow gallery so the CLI
+    (option 4) gets the same plot instead of terminal-only output.
+
+    Returns the list of saved PNG paths, best-ranked first.
+    """
+    if out_dir is None:
+        out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+    os.makedirs(out_dir, exist_ok=True)
+
+    topo = _build_grid_graph(grid)
+    stem = assets_file.replace(".py", "")
+
+    paths = []
+    ranked = sorted(result.evaluated, key=lambda x: x[2])
+    for rank, (bat_locs, commitment, true_cost, res_obj) in enumerate(ranked, start=1):
+        panel_result = res_obj if hasattr(res_obj, "commitment") else _CommitShim(res_obj, commitment, T)
+        fig, ax = plt.subplots(figsize=(9, 7))
+        buses = tuple(bat_locs.values())
+        draw_siting_panel(
+            panel_result, gen_locations, bat_locs, grid, ax,
+            title=f"Rank {rank} — Batteries at buses {buses}",
+            subtitle=f"True cost: ${true_cost:,.0f}  |  line labels = max loading",
+            _topo=topo,
+        )
+        path = os.path.join(out_dir, f"quantum_siting_{T}h_{stem}_rank{rank:02d}.png")
+        plt.tight_layout()
+        plt.savefig(path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Plot saved: {path}")
+        paths.append(path)
+
+    return paths
 
 
 def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteries,
