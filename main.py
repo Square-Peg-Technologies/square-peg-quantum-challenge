@@ -506,6 +506,16 @@ def main():
     max_hours = grid.power_demand.shape[1]
     T = prompt_hours(max_hours)
 
+    # Weather scenario: hourly load multiplier applied before datacenter
+    # injection (the datacenter is a flat load, not scaled by weather or the
+    # daily demand curve — see ieee14_plexos_basecase's datacenter modeling).
+    # Only bites during the first len(HEAT_FACTORS) hours of any run, mirroring
+    # how OUTAGES models a single dated event rather than a recurring pattern.
+    heat_factors = getattr(assets_mod, "HEAT_FACTORS", None)
+    if heat_factors is not None:
+        n = min(len(heat_factors), grid.power_demand.shape[1])
+        grid.power_demand[:, :n] *= np.array(heat_factors[:n], dtype=float)[np.newaxis, :]
+
     # Inject datacenter load if the assets file specifies one
     dc_bus = getattr(assets_mod, "DATACENTER_BUS", None)
     dc_mw = float(getattr(assets_mod, "DATACENTER_MW", 0))
