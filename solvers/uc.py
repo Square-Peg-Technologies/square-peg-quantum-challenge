@@ -107,7 +107,7 @@ def run_uc(grid, generators, batteries, bat_locs, T):
 
     # Per-timestep power balance and line flow constraints
     for t in range(T):
-        demand = grid.power_demand[:, t]  # (5,)
+        demand = grid.power_demand[:, t]
 
         # Net injection expression (CVXPY)
         inj = cp.Constant(np.zeros(n_bus))
@@ -116,7 +116,7 @@ def run_uc(grid, generators, batteries, bat_locs, T):
         for b in range(n_bat):
             inj = inj + (r_minus[b, t] - r_plus[b, t]) * e_bat[b]
 
-        net = inj - demand  # (5,)
+        net = inj - demand
 
         # Power balance: total injection equals total demand
         constraints.append(cp.sum(net) == 0)
