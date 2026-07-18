@@ -64,5 +64,11 @@ DATACENTER_BUS: int | None = None
 DATACENTER_MW: float = 0.0
 
 # Optional {gen_index: set of 0-indexed hours} forcing a generator offline for
-# a contingency scenario (see 4batt_g2out.py). None here = runs normally.
+# a contingency scenario (see 4batt_dcbus4_g2out.py). None here = runs normally.
 OUTAGES: dict[int, set[int]] | None = None
+
+# Optional list of per-hour multipliers applied to the whole system's load
+# (every bus) for a weather scenario (see 4batt_dcbus4_heatwave.py). Applied
+# before any datacenter injection, only for the first len(HEAT_FACTORS) hours
+# of a run. None here = runs normally.
+HEAT_FACTORS: list[float] | None = None

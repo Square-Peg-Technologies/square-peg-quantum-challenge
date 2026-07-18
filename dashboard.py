@@ -254,6 +254,17 @@ def _load_case(use_case: str, assets_file: str):
         use_case, use_case_path, assets_path
     )
     grid = _base_grid(use_case, grid_mod)
+
+    # Weather scenario: hourly load multiplier applied before datacenter
+    # injection (the datacenter is a flat load, not scaled by weather or the
+    # daily demand curve). Only bites during the first len(HEAT_FACTORS)
+    # hours of any run, mirroring how OUTAGES models a single dated event
+    # rather than a recurring pattern.
+    heat_factors = getattr(assets_mod, "HEAT_FACTORS", None)
+    if heat_factors is not None:
+        n = min(len(heat_factors), grid.power_demand.shape[1])
+        grid.power_demand[:, :n] *= np.array(heat_factors[:n], dtype=float)[np.newaxis, :]
+
     dc_bus = getattr(assets_mod, "DATACENTER_BUS", None)
     dc_mw = float(getattr(assets_mod, "DATACENTER_MW", 0))
     if dc_bus is not None and dc_mw > 0:
