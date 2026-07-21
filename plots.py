@@ -694,7 +694,7 @@ def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteri
     ax.set_ylabel("MW", fontsize=10)
     ax.set_title("Battery Charge / Discharge  (positive = charging)", fontsize=10)
     if real_batteries:
-        _legend_with_cong(ax, loc="upper left", fontsize=8)
+        _legend_with_cong(ax, loc="lower left", fontsize=8)
     else:
         ax.text(0.5, 0.5, "No batteries in this use case", transform=ax.transAxes,
                 ha="center", va="center", fontsize=10, color="#888888")
@@ -711,7 +711,7 @@ def save_dispatch_overview(result, opt_name, T, assets_file, generators, batteri
     ax.set_ylabel("SOC (MWh)", fontsize=10)
     ax.set_title("Battery State of Charge", fontsize=10)
     if real_batteries:
-        _legend_with_cong(ax, loc="upper left", fontsize=8)
+        _legend_with_cong(ax, loc="lower left", fontsize=8)
     else:
         ax.text(0.5, 0.5, "No batteries in this use case", transform=ax.transAxes,
                 ha="center", va="center", fontsize=10, color="#888888")

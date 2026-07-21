@@ -11,6 +11,7 @@ class EDResult:
     total_cost: float
     hourly_costs: list[float]
     congested_lines: list[list[int]]  # per hour, list of line indices
+    total_losses_mw: list[float] = None  # per hour, None unless line_losses=True
 
 
 @dataclass
@@ -24,6 +25,7 @@ class UCResult:
     congested_lines: list[list[int]]  # per hour
     commitment: np.ndarray         # shape (n_generators, T), binary
     startups: np.ndarray           # shape (n_generators, T), binary
+    total_losses_mw: list[float] = None  # per hour, None unless line_losses=True
 
 
 @dataclass

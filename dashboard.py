@@ -404,17 +404,18 @@ def _cached_view(problem: str, key: dict):
 _NOT_RUN = "*Not run yet with these settings.*"
 
 
-def _ed_key(use_case, assets_file, T):
-    return {"use_case": use_case, "assets_file": assets_file, "T": int(T)}
+def _ed_key(use_case, assets_file, T, line_losses=False):
+    return {"use_case": use_case, "assets_file": assets_file, "T": int(T),
+            "line_losses": bool(line_losses)}
 
 
-def _cached_ed(use_case, assets_file, T):
-    v = _cached_view("ED", _ed_key(use_case, assets_file, T))
+def _cached_ed(use_case, assets_file, T, line_losses=False):
+    v = _cached_view("ED", _ed_key(use_case, assets_file, T, line_losses))
     return (v[0], v[1], v[2]) if v else (_NOT_RUN, "", [])
 
 
-def _cached_uc(use_case, assets_file, T):
-    v = _cached_view("UC", _ed_key(use_case, assets_file, T))
+def _cached_uc(use_case, assets_file, T, line_losses=False):
+    v = _cached_view("UC", _ed_key(use_case, assets_file, T, line_losses))
     return (v[0], v[1], v[2]) if v else (_NOT_RUN, "", [])
 
 
@@ -455,19 +456,21 @@ def _cached_quantum(use_case, assets_file, T, backend_label, sampling_label, n_c
 # Problem runners
 # ---------------------------------------------------------------------------
 
-def run_ed_tab(use_case: str, assets_file: str, T: float, force: bool = False):
+def run_ed_tab(use_case: str, assets_file: str, T: float, force: bool = False,
+              line_losses: bool = False):
     T = int(T)
     _save_settings("ed", {"use_case": use_case, "assets_file": assets_file, "T": T})
 
     if not force:
-        cached = _cached_view("ED", _ed_key(use_case, assets_file, T))
+        cached = _cached_view("ED", _ed_key(use_case, assets_file, T, line_losses))
         if cached is not None:
             return cached[0], cached[1], cached[2], _history_table()
 
     def solve(grid, assets_mod, loc_mod, dc_bus, dc_mw):
         from solvers.ed import run_ed
         result = run_ed(grid, assets_mod.GENERATORS, assets_mod.BATTERIES,
-                        loc_mod.GENERATOR_LOCATIONS, loc_mod.BATTERY_LOCATIONS, T)
+                        loc_mod.GENERATOR_LOCATIONS, loc_mod.BATTERY_LOCATIONS, T,
+                        line_losses=line_losses)
         cli.save_plot(result, "ED", T, assets_file, grid=grid,
                       generators=assets_mod.GENERATORS,
                       bat_locs=loc_mod.BATTERY_LOCATIONS, batteries=assets_mod.BATTERIES,
@@ -483,17 +486,20 @@ def run_ed_tab(use_case: str, assets_file: str, T: float, force: bool = False):
     else:
         plain = f"${result.total_cost:,.2f} total"
         summary = f"### ED — total cost **${result.total_cost:,.2f}** over {T}h"
+        if line_losses and result.total_losses_mw:
+            summary += f" (losses: {sum(result.total_losses_mw):,.1f} MWh)"
     history = _finish_run("ED", use_case, assets_file, T, plain, log_path, plots,
-                          key=_ed_key(use_case, assets_file, T))
+                          key=_ed_key(use_case, assets_file, T, line_losses))
     return summary, text, plots, history
 
 
-def run_uc_tab(use_case: str, assets_file: str, T: float, force: bool = False):
+def run_uc_tab(use_case: str, assets_file: str, T: float, force: bool = False,
+              line_losses: bool = False):
     T = int(T)
     _save_settings("uc", {"use_case": use_case, "assets_file": assets_file, "T": T})
 
     if not force:
-        cached = _cached_view("UC", _ed_key(use_case, assets_file, T))
+        cached = _cached_view("UC", _ed_key(use_case, assets_file, T, line_losses))
         if cached is not None:
             return cached[0], cached[1], cached[2], _history_table()
 
@@ -501,7 +507,8 @@ def run_uc_tab(use_case: str, assets_file: str, T: float, force: bool = False):
         from solvers.uc import run_uc
         outages = getattr(assets_mod, "OUTAGES", None)
         result = run_uc(grid, assets_mod.GENERATORS, assets_mod.BATTERIES,
-                        loc_mod.BATTERY_LOCATIONS, T, outages=outages)
+                        loc_mod.BATTERY_LOCATIONS, T, outages=outages,
+                        line_losses=line_losses)
         cli.save_plot(result, "UC", T, assets_file, grid=grid,
                       generators=assets_mod.GENERATORS,
                       bat_locs=loc_mod.BATTERY_LOCATIONS, batteries=assets_mod.BATTERIES,
@@ -517,8 +524,10 @@ def run_uc_tab(use_case: str, assets_file: str, T: float, force: bool = False):
     else:
         plain = f"${result.total_cost:,.2f} total"
         summary = f"### UC — total cost **${result.total_cost:,.2f}** over {T}h"
+        if line_losses and result.total_losses_mw:
+            summary += f" (losses: {sum(result.total_losses_mw):,.1f} MWh)"
     history = _finish_run("UC", use_case, assets_file, T, plain, log_path, plots,
-                          key=_ed_key(use_case, assets_file, T))
+                          key=_ed_key(use_case, assets_file, T, line_losses))
     return summary, text, plots, history
 
 
@@ -820,10 +829,12 @@ def build_app() -> gr.Blocks:
         with gr.Tab("Economic Dispatch") as ed_tab:
             with gr.Row():
                 ed_uc, ed_assets, ed_T = _control_bar("ed")
+                ed_losses = gr.Checkbox(value=False, label="Line Losses",
+                                        scale=0, min_width=130)
                 ed_force = gr.Checkbox(value=False, label="Re-run even if cached",
                                        scale=0, min_width=150)
                 ed_btn = gr.Button("▶ Run", variant="primary", scale=0, min_width=120)
-            _ed0 = _cached_ed(ed_uc.value, ed_assets.value, ed_T.value)
+            _ed0 = _cached_ed(ed_uc.value, ed_assets.value, ed_T.value, ed_losses.value)
             ed_summary = gr.Markdown(_ed0[0])
             with gr.Tab("📈 Plots"):
                 ed_plots = gr.State(_ed0[2])
@@ -837,10 +848,12 @@ def build_app() -> gr.Blocks:
         with gr.Tab("Unit Commitment") as uc_tab:
             with gr.Row():
                 uc_uc, uc_assets, uc_T = _control_bar("uc")
+                uc_losses = gr.Checkbox(value=False, label="Line Losses",
+                                        scale=0, min_width=130)
                 uc_force = gr.Checkbox(value=False, label="Re-run even if cached",
                                        scale=0, min_width=150)
                 uc_btn = gr.Button("▶ Run", variant="primary", scale=0, min_width=120)
-            _uc0 = _cached_uc(uc_uc.value, uc_assets.value, uc_T.value)
+            _uc0 = _cached_uc(uc_uc.value, uc_assets.value, uc_T.value, uc_losses.value)
             uc_summary = gr.Markdown(_uc0[0])
             with gr.Tab("📈 Plots"):
                 uc_plots = gr.State(_uc0[2])
@@ -970,9 +983,9 @@ def build_app() -> gr.Blocks:
             _tab.select(lambda: gr.update(visible=True), outputs=hist_section)
 
         # Wire run buttons (cache-first; history table refreshes on every run)
-        ed_btn.click(run_ed_tab, inputs=[ed_uc, ed_assets, ed_T, ed_force],
+        ed_btn.click(run_ed_tab, inputs=[ed_uc, ed_assets, ed_T, ed_force, ed_losses],
                      outputs=[ed_summary, ed_term, ed_plots, hist_table])
-        uc_btn.click(run_uc_tab, inputs=[uc_uc, uc_assets, uc_T, uc_force],
+        uc_btn.click(run_uc_tab, inputs=[uc_uc, uc_assets, uc_T, uc_force, uc_losses],
                      outputs=[uc_summary, uc_term, uc_plots, hist_table])
         st_btn.click(run_siting_tab,
                      inputs=[st_uc, st_assets, st_T, st_limit, st_force],

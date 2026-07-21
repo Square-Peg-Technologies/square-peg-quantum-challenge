@@ -56,6 +56,11 @@ def prompt_hours(max_hours: int) -> int:
         print(f"Invalid input. Please enter a whole number between 1 and {max_hours}.")
 
 
+def prompt_line_losses() -> bool:
+    raw = input("Model transmission line losses? (y/N): ").strip().lower()
+    return raw in ("y", "yes")
+
+
 def prompt_use_case() -> tuple[str, str]:
     """Scan use_cases/ for subdirectories and prompt the user to pick one.
 
@@ -525,6 +530,9 @@ def main():
     # Forced generator outage (contingency scenario) if the assets file specifies one
     outages = getattr(assets_mod, "OUTAGES", None)
 
+    # Line losses toggle: only meaningful for ED/UC (opt 1/2)
+    line_losses = prompt_line_losses() if opt in (1, 2) else False
+
     generators = assets_mod.GENERATORS
     batteries = assets_mod.BATTERIES
     gen_locs = loc_mod.GENERATOR_LOCATIONS
@@ -543,9 +551,11 @@ def main():
 
     t_start = time.perf_counter()
     if opt == 1:
-        result = run_ed(grid, generators, batteries, gen_locs, bat_locs, T)
+        result = run_ed(grid, generators, batteries, gen_locs, bat_locs, T,
+                        line_losses=line_losses)
     elif opt == 2:
-        result = run_uc(grid, generators, batteries, bat_locs, T, outages=outages)
+        result = run_uc(grid, generators, batteries, bat_locs, T, outages=outages,
+                        line_losses=line_losses)
     elif opt == 3:
         tl = input("Time limit in seconds (default 120): ").strip()
         time_limit_s = float(tl) if tl else 120.0
