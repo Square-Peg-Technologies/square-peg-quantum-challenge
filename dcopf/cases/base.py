@@ -25,6 +25,10 @@ class BaseCase(object):
             Atilde:     Full line-bus incidence matrix
             Dtilde:     Line-line susceptance matrix -- diagonal matrix satisfying Btilde = Atilde.T Dtilde Atilde
             PTDF:       Power Transfer Distribution Factors
+            R:          Line resistance (pu), one per line -- used only for the
+                        optional line-loss model; the lossless PTDF above never
+                        reads it.
+            Sbase:      System base MVA (from case_description.baseMVA, default 100)
 
             ** The following attributes can either be a column vector or a matrix with m column **
             ** If matrix at each step i%m-th column will be used **
@@ -42,6 +46,8 @@ class BaseCase(object):
         self.Atilde = None
         self.Dtilde = None
         self.PTDF = None
+        self.R = None
+        self.Sbase = None
 
         self.fbar = None
         self.phibar = None
@@ -74,6 +80,8 @@ class BaseCase(object):
 
         d = np.array([mpc.branch[i][3] for i in range(L)])
         Dtilde = np.diag(1/d)
+
+        r = np.array([mpc.branch[i][2] for i in range(L)])
 
         if mpc.fbar is not None:
             fbar = np.array(mpc.fbar).reshape((-1,1))
@@ -114,6 +122,8 @@ class BaseCase(object):
         self.plobar = plobar
         self.power_demand = power_demand
         self.generator_cost = generator_cost
+        self.R = r
+        self.Sbase = getattr(mpc, "baseMVA", 100.0)
 
 
 class BaseCaseDescription(object):
