@@ -588,7 +588,11 @@ def run_vqa_qiskit(
 def _eval_one(args: tuple):
     """Top-level worker for parallel candidate evaluation (must be picklable)."""
     import copy
-    bat_locs, commitment, grid, generators, batteries, T, second_stage = args
+    if len(args) == 8:
+        bat_locs, commitment, grid, generators, batteries, T, second_stage, line_losses = args
+    else:
+        bat_locs, commitment, grid, generators, batteries, T, second_stage = args
+        line_losses = False
     try:
         if second_stage == "ed":
             from solvers.ed import run_ed
@@ -598,13 +602,41 @@ def _eval_one(args: tuple):
                     gens_modified[g]["p_min"] = 0.0
                     gens_modified[g]["p_max"] = 0.0
             gen_locs = {g: gen["bus"] for g, gen in enumerate(gens_modified)}
-            result_obj = run_ed(grid, gens_modified, batteries, gen_locs, bat_locs, T)
+            result_obj = run_ed(grid, gens_modified, batteries, gen_locs, bat_locs, T,
+                                line_losses=line_losses)
         else:
             from solvers.uc import run_uc
-            result_obj = run_uc(grid, generators, batteries, bat_locs, T)
+            result_obj = run_uc(grid, generators, batteries, bat_locs, T,
+                                line_losses=line_losses)
         return (bat_locs, commitment, result_obj.total_cost, result_obj)
     except Exception:
         return None
+
+
+def reevaluate_with_losses(
+    evaluated: list[tuple],
+    grid,
+    generators: list[dict],
+    batteries: list[dict],
+    T: int,
+    second_stage: str,
+) -> list[tuple]:
+    """Re-solve every already-evaluated candidate with line_losses=True.
+
+    Runs sequentially in-process against the real Case object (not a
+    picklable snapshot) since it needs grid.R / grid.Sbase and there are
+    only as many candidates as evaluate_candidates() already produced (no
+    new search, no new candidates). Returns the same
+    [(bat_locs, commitment, true_cost, result_obj), ...] shape as
+    evaluate_candidates, with loss-aware costs/results.
+    """
+    reevaluated = []
+    for bat_locs, commitment, _lossless_cost, _result in evaluated:
+        outcome = _eval_one((bat_locs, commitment, grid, generators, batteries, T,
+                            second_stage, True))
+        if outcome is not None:
+            reevaluated.append(outcome)
+    return reevaluated
 
 
 def evaluate_candidates(
@@ -698,6 +730,7 @@ def run_quantum_siting(
     max_time_s: float | None = None,
     ansatz: str = "auto",
     final_shots: int | None = None,
+    line_losses: bool = False,
 ):
     """Full hybrid quantum-classical siting pipeline.
 
@@ -722,6 +755,15 @@ def run_quantum_siting(
                        (default), auto-picked by ionq_qbraid_backend.default_shots()
                        based on DEVICE_ID (5000 on the free simulator, 500 on
                        billed real hardware). Unused otherwise.
+    line_losses      : if True, the quantum sieve and initial classical
+                       refinement stay lossless (unchanged), then every
+                       already-evaluated candidate (the full n_candidates
+                       set, no extra search) is re-solved once with
+                       line_losses=True, and the cheapest loss-aware result
+                       becomes the final `best`. Re-solving the whole
+                       evaluated set (not just the single lossless best)
+                       guards against losses reshuffling which candidate is
+                       actually cheapest, not just its reported cost.
 
     final_backend="ionq_qbraid": COBYLA trains locally regardless of sim_method
     (submitting each of the ~150+ training iterations to qBraid would be far
@@ -830,6 +872,17 @@ def run_quantum_siting(
 
     if not evaluated:
         raise RuntimeError("No feasible candidates found after classical refinement.")
+
+    if line_losses:
+        t_loss_start = time.perf_counter()
+        evaluated = reevaluate_with_losses(
+            evaluated, grid, generators, batteries, T, second_stage,
+        )
+        runtime_phases[f"Loss-aware re-solve ({len(evaluated)} candidates)"] = (
+            time.perf_counter() - t_loss_start
+        )
+        if not evaluated:
+            raise RuntimeError("No feasible candidates found after loss-aware re-solve.")
 
     best = min(evaluated, key=lambda x: x[2])
 

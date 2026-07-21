@@ -419,28 +419,31 @@ def _cached_uc(use_case, assets_file, T, line_losses=False):
     return (v[0], v[1], v[2]) if v else (_NOT_RUN, "", [])
 
 
-def _siting_key(use_case, assets_file, T, time_limit):
+def _siting_key(use_case, assets_file, T, time_limit, line_losses=False, loss_top_k=10):
     return {"use_case": use_case, "assets_file": assets_file, "T": int(T),
-            "time_limit": float(time_limit)}
+            "time_limit": float(time_limit), "line_losses": bool(line_losses),
+            "loss_top_k": int(loss_top_k)}
 
 
-def _cached_siting(use_case, assets_file, T, time_limit):
-    v = _cached_view("Siting", _siting_key(use_case, assets_file, T, time_limit))
+def _cached_siting(use_case, assets_file, T, time_limit, line_losses=False, loss_top_k=10):
+    v = _cached_view("Siting", _siting_key(use_case, assets_file, T, time_limit,
+                                           line_losses, loss_top_k))
     return (v[0], v[1], v[2]) if v else (_NOT_RUN, "", [])
 
 
 def _quantum_key(use_case, assets_file, T, backend_label, sampling_label, n_candidates,
-                 second_stage_label, warm_start_label):
+                 second_stage_label, warm_start_label, line_losses=False):
     return {"use_case": use_case, "assets_file": assets_file, "T": int(T),
             "backend": backend_label, "sampling": sampling_label,
             "n_candidates": int(n_candidates),
-            "second_stage": second_stage_label, "warm_start": warm_start_label}
+            "second_stage": second_stage_label, "warm_start": warm_start_label,
+            "line_losses": bool(line_losses)}
 
 
 def _cached_quantum(use_case, assets_file, T, backend_label, sampling_label, n_candidates,
-                    second_stage_label, warm_start_label):
+                    second_stage_label, warm_start_label, line_losses=False):
     key = _quantum_key(use_case, assets_file, T, backend_label, sampling_label, n_candidates,
-                       second_stage_label, warm_start_label)
+                       second_stage_label, warm_start_label, line_losses)
     v = _cached_view("Quantum", key)
     if v is None:
         return _NOT_RUN, "", [], pd.DataFrame(), None
@@ -532,20 +535,25 @@ def run_uc_tab(use_case: str, assets_file: str, T: float, force: bool = False,
 
 
 def run_siting_tab(use_case: str, assets_file: str, T: float, time_limit: float,
+                   line_losses: bool = False, loss_top_k: float = 10,
                    force: bool = False):
     T = int(T)
+    loss_top_k = int(loss_top_k)
     _save_settings("siting", {"use_case": use_case, "assets_file": assets_file,
-                              "T": T, "time_limit": time_limit})
+                              "T": T, "time_limit": time_limit,
+                              "line_losses": line_losses, "loss_top_k": loss_top_k})
 
     if not force:
-        cached = _cached_view("Siting", _siting_key(use_case, assets_file, T, time_limit))
+        cached = _cached_view("Siting", _siting_key(use_case, assets_file, T, time_limit,
+                                                     line_losses, loss_top_k))
         if cached is not None:
             return cached[0], cached[1], cached[2], _history_table()
 
     def solve(grid, assets_mod, loc_mod, dc_bus, dc_mw):
         from solvers.siting_benders import run_siting_benders
         result = run_siting_benders(grid, assets_mod.GENERATORS, assets_mod.BATTERIES,
-                                    T, time_limit_s=float(time_limit))
+                                    T, time_limit_s=float(time_limit),
+                                    line_losses=line_losses, loss_top_k=loss_top_k)
         if result.runtime_phases:
             from plots import save_runtime_breakdown
             save_runtime_breakdown(result.runtime_phases, "Siting", T, assets_file)
@@ -571,8 +579,11 @@ def run_siting_tab(use_case: str, assets_file: str, T: float, time_limit: float,
         plain = f"buses {result.bus_tuple} · ${result.total_cost:,.0f}"
         summary = (f"### Siting MIP — best placement **buses {result.bus_tuple}** "
                    f"at **${result.total_cost:,.0f}** ({label})")
+        if line_losses and result.uc_result.total_losses_mw:
+            summary += f"  \n(losses: {sum(result.uc_result.total_losses_mw):,.1f} MWh, top {loss_top_k} candidates re-solved)"
     history = _finish_run("Siting", use_case, assets_file, T, plain, log_path, plots,
-                          key=_siting_key(use_case, assets_file, T, time_limit))
+                          key=_siting_key(use_case, assets_file, T, time_limit,
+                                          line_losses, loss_top_k))
     return summary, text, plots, history
 
 
@@ -637,7 +648,8 @@ def _latest_runtime_chart() -> str | None:
 def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: str,
                     sampling_label: str, n_candidates: float, second_stage_label: str,
                     warm_start_label: str, max_time_s: float = 300,
-                    ansatz_label: str = "Auto", force: bool = False):
+                    ansatz_label: str = "Auto", line_losses: bool = False,
+                    force: bool = False):
     T = int(T)
     n_candidates = int(n_candidates)
     if backend_label == "Qiskit":
@@ -681,11 +693,12 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
         "backend": backend_label, "sampling": sampling_label, "n_candidates": n_candidates,
         "second_stage": second_stage_label, "warm_start": warm_start_label,
         "max_time_s": float(max_time_s), "ansatz": ansatz_label,
+        "line_losses": line_losses,
     })
 
     if not force:
         c = _cached_quantum(use_case, assets_file, T, backend_label, sampling_label,
-                            n_candidates, second_stage_label, warm_start_label)
+                            n_candidates, second_stage_label, warm_start_label, line_losses)
         if c[0] != _NOT_RUN:
             summary, text, plots, table, chart = c
             return (summary, text, plots, table, _load_powerflow_gallery(),
@@ -711,7 +724,7 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
             grid=grid, generators=assets_mod.GENERATORS, batteries=assets_mod.BATTERIES,
             T=T, sim_method=sim_method, final_backend=final_backend, n_candidates=n_candidates,
             second_stage=second_stage, warm_start=warm_start, track_convergence=True,
-            max_time_s=float(max_time_s), ansatz=ansatz,
+            max_time_s=float(max_time_s), ansatz=ansatz, line_losses=line_losses,
         )
         from plots import save_runtime_breakdown
         state["runtime_chart"] = save_runtime_breakdown(
@@ -735,7 +748,7 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
                                              assets_file, T, solve)
 
     q_key = _quantum_key(use_case, assets_file, T, backend_label, sampling_label,
-                         n_candidates, second_stage_label, warm_start_label)
+                         n_candidates, second_stage_label, warm_start_label, line_losses)
 
     if result is None:
         gr.Warning("Quantum run failed — open the Terminal sub-tab for the traceback.")
@@ -745,7 +758,7 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
         return ("### Run failed — see Terminal sub-tab", text, plots,
                 pd.DataFrame(), [], None, history)
 
-    best_locs, _commit, best_cost, _res = result.best
+    best_locs, _commit, best_cost, best_res = result.best
     plain = f"buses {tuple(best_locs.values())} · ${best_cost:,.0f}"
     summary = (
         f"### Quantum Siting — best placement **buses {tuple(best_locs.values())}** "
@@ -753,6 +766,8 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
         f"{len(result.evaluated)}/{len(result.quantum_candidates)} candidates feasible · "
         f"sieve {result.runtime_quantum:.1f}s · refinement {result.runtime_classical:.1f}s"
     )
+    if line_losses and getattr(best_res, "total_losses_mw", None):
+        summary += f"  \n(losses: {sum(best_res.total_losses_mw):,.1f} MWh, all {len(result.evaluated)} candidates re-solved)"
 
     ranked = sorted(result.evaluated, key=lambda x: x[2])
     table = pd.DataFrame(
@@ -869,15 +884,24 @@ def build_app() -> gr.Blocks:
                 st_uc, st_assets, st_T = _control_bar("siting")
                 st_limit = gr.Number(value=_setting("siting", "time_limit", 120),
                                      label="Time limit (s)", scale=0, min_width=130)
+                st_losses = gr.Checkbox(value=_setting("siting", "line_losses", False),
+                                        label="Line Losses", scale=0, min_width=130)
+                st_loss_topk = gr.Number(value=_setting("siting", "loss_top_k", 10),
+                                         label="Loss re-solve top-K", scale=0, min_width=150)
                 st_force = gr.Checkbox(value=False, label="Re-run even if cached",
                                        scale=0, min_width=150)
                 st_btn = gr.Button("▶ Run", variant="primary", scale=0, min_width=120)
             gr.Markdown(
                 "_Suggested limits: **pjm5** → 60 s · **ieee14** → 120–300 s · "
                 "**ieee30** → 600–1200 s. "
-                "Benders stops early if optimal; the limit is a safety cap._"
+                "Benders stops early if optimal; the limit is a safety cap. "
+                "Line Losses keeps the search itself lossless (unchanged speed), then "
+                "re-solves the top-K distinct placements found with losses on and reports "
+                "the cheapest of those, adding roughly K x (one loss-aware UC solve) to the "
+                "total runtime._"
             )
-            _st0 = _cached_siting(st_uc.value, st_assets.value, st_T.value, st_limit.value)
+            _st0 = _cached_siting(st_uc.value, st_assets.value, st_T.value, st_limit.value,
+                                  st_losses.value, st_loss_topk.value)
             st_summary = gr.Markdown(_st0[0])
             with gr.Tab("📈 Plots"):
                 st_plots = gr.State(_st0[2])
@@ -921,17 +945,22 @@ def build_app() -> gr.Blocks:
                     info="Auto: butterfly for statevector, linear-chain for Aer TN")
                 q_limit = gr.Number(value=_setting("quantum", "max_time_s", 60),
                                     label="Time limit (s)", scale=0, min_width=130)
+                q_losses = gr.Checkbox(value=_setting("quantum", "line_losses", False),
+                                       label="Line Losses", scale=0, min_width=130)
                 q_force = gr.Checkbox(value=False, label="Re-run even if cached",
                                       scale=0, min_width=150)
                 q_btn = gr.Button("▶ Run", variant="primary", scale=0, min_width=120)
             gr.Markdown(
                 "_Suggested limits: **pjm5** → 30–60 s · **ieee14** → 60–120 s · "
                 "**ieee30 (Aer TN)** → 60–90 s (CPU MPS — longer will overheat). "
-                "Applies to the VQA optimisation loop._"
+                "Applies to the VQA optimisation loop. "
+                "Line Losses keeps the quantum sieve and classical refinement lossless, "
+                "then re-solves all evaluated Candidates with losses on (the Candidates "
+                "slider above controls this count) and reports the cheapest._"
             )
             _q0 = _cached_quantum(q_uc.value, q_assets.value, q_T.value,
                                   q_backend.value, q_sampling.value, q_ncand.value,
-                                  q_stage.value, q_warm.value)
+                                  q_stage.value, q_warm.value, q_losses.value)
             q_summary = gr.Markdown(_q0[0])
             with gr.Tab("📋 Results"):
                 q_table = gr.Dataframe(value=_q0[3], label="Candidate ranking",
@@ -988,12 +1017,12 @@ def build_app() -> gr.Blocks:
         uc_btn.click(run_uc_tab, inputs=[uc_uc, uc_assets, uc_T, uc_force, uc_losses],
                      outputs=[uc_summary, uc_term, uc_plots, hist_table])
         st_btn.click(run_siting_tab,
-                     inputs=[st_uc, st_assets, st_T, st_limit, st_force],
+                     inputs=[st_uc, st_assets, st_T, st_limit, st_losses, st_loss_topk, st_force],
                      outputs=[st_summary, st_term, st_plots, hist_table])
         q_btn.click(
             run_quantum_tab,
             inputs=[q_uc, q_assets, q_T, q_backend, q_sampling, q_ncand, q_stage, q_warm,
-                   q_limit, q_ansatz, q_force],
+                   q_limit, q_ansatz, q_losses, q_force],
             outputs=[q_summary, q_term, q_plots, q_table, q_pf_gallery,
                      q_runtime, hist_table],
         )
