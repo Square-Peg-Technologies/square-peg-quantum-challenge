@@ -118,6 +118,8 @@ def run_siting_benders(
     batch_size: int | None = None,
     stall_iters: int = 3,
     stall_rel_tol: float = 1e-4,
+    line_losses: bool = False,
+    loss_top_k: int = 10,
 ) -> SitingMIPResult:
     """Battery siting via batch Benders decomposition.
 
@@ -137,8 +139,23 @@ def run_siting_benders(
                     the solver runs to the time limit). 0 disables.
     stall_rel_tol : a new cost counts as an improvement only if it beats the
                     incumbent by this relative margin.
+    line_losses   : if True, the Benders search itself stays lossless (fast,
+                    unchanged) to pick candidate placements, then the top
+                    loss_top_k distinct placements found (by lossless cost)
+                    are each re-solved once with line_losses=True, and the
+                    cheapest of those loss-aware re-solves becomes the final
+                    reported placement/cost. Re-solving more than just the
+                    single best lossless candidate guards against losses
+                    reshuffling which placement is actually cheapest, not
+                    just its reported cost.
+    loss_top_k    : how many distinct lossless placements to re-solve with
+                    losses when line_losses=True. Ignored otherwise.
     """
     n_bat    = len(batteries)
+    orig_grid = grid                    # keep the real Case object for the
+                                         # final loss-aware re-solve, which
+                                         # runs in-process (not pickled) and
+                                         # needs grid.R / grid.Sbase
     grid     = _GridData(grid)          # make picklable for subprocess workers
     n_bus    = grid.PTDF.shape[1]
     K        = batch_size or (os.cpu_count() or 1)
@@ -148,6 +165,7 @@ def run_siting_benders(
     best_cost:    float        = float("inf")
     best_result:  UCResult     = None          # type: ignore[assignment]
     best_bat_locs: dict        = {}
+    all_candidates: dict[tuple, tuple] = {}    # bus_tuple -> (bat_locs, cost, uc_result)
 
     t_start  = time.perf_counter()
     n_iters  = 0
@@ -228,6 +246,9 @@ def run_siting_benders(
 
         for (bat_locs, Z, uc_result), S_plus in zip(outcomes, batch_x_stars):
             n_solved += 1
+            if Z < float("inf"):
+                bus_tuple_key = tuple(bat_locs[b] for b in range(n_bat))
+                all_candidates[bus_tuple_key] = (dict(bat_locs), Z, uc_result)
             if Z < best_cost:
                 if Z < best_cost * (1 - stall_rel_tol) or best_cost == float("inf"):
                     last_improve_iter = n_iters + 1
@@ -273,6 +294,25 @@ def run_siting_benders(
             "Benders found no feasible solution within the time limit"
         )
 
+    t_loss = 0.0
+    if line_losses:
+        from solvers.uc import run_uc
+        _t0 = time.perf_counter()
+        ranked = sorted(all_candidates.values(), key=lambda item: item[1])[:loss_top_k]
+        loss_best_cost = float("inf")
+        loss_best_result = None
+        loss_best_locs = None
+        for bat_locs, _lossless_cost, _ in ranked:
+            r = run_uc(orig_grid, generators, batteries, bat_locs, T, line_losses=True)
+            if r.total_cost < loss_best_cost:
+                loss_best_cost = r.total_cost
+                loss_best_result = r
+                loss_best_locs = bat_locs
+        best_cost     = loss_best_cost
+        best_result   = loss_best_result
+        best_bat_locs = loss_best_locs
+        t_loss = time.perf_counter() - _t0
+
     bus_tuple  = tuple(best_bat_locs[b] for b in range(n_bat))
     elapsed    = time.perf_counter() - t_start
     if stalled:
@@ -285,8 +325,10 @@ def run_siting_benders(
     runtime_phases = {
         f"Master MIP solves (SCIP, {n_iters} iters)": t_master,
         f"Parallel UC subproblems ({n_solved} solves)": t_uc,
-        "Cut management + overhead": max(0.0, elapsed - t_master - t_uc),
+        "Cut management + overhead": max(0.0, elapsed - t_master - t_uc - t_loss),
     }
+    if line_losses:
+        runtime_phases[f"Loss-aware re-solve (top {len(ranked)} candidates)"] = t_loss
 
     return SitingMIPResult(
         bus_tuple   = bus_tuple,
