@@ -2,23 +2,21 @@ import numpy as np
 import cvxpy as cp
 
 from .results import UCResult
-from dcopf.losses import true_loss_mw, loss_allocation
-
-MAX_LOSS_ITERS = 4
-LOSS_TOL_MW = 1e-3  # convergence tolerance on per-bus loss injection
+from dcopf.losses import true_loss_mw
 
 
-def _solve_uc_miqp(grid, generators, batteries, bat_locs, T, outages, demand):
-    """Build and solve the UC MIQP for a given (fixed) demand matrix.
+def _solve_uc_miqp(grid, generators, batteries, bat_locs, T, outages, demand,
+                    line_losses=False):
+    """Build and solve the UC MIQP (or MIQCP, if line_losses) for a demand.
 
-    `demand` (n_bus, T) already has any current loss estimate baked in as
-    extra fixed withdrawal — this function has no notion of losses itself.
+    `demand` (n_bus, T) is a plain numpy array.
     """
     PTDF = np.array(grid.PTDF)
     fbar = np.array(grid.fbar).flatten()
     n_bus = PTDF.shape[1]
     n_gen = len(generators)
     n_bat = len(batteries)
+    n_line = PTDF.shape[0]
 
     p = cp.Variable((n_gen, T), nonneg=True)
     u = cp.Variable((n_gen, T), boolean=True)
@@ -28,6 +26,8 @@ def _solve_uc_miqp(grid, generators, batteries, bat_locs, T, outages, demand):
     r_minus = cp.Variable((n_bat, T), nonneg=True)
     soc     = cp.Variable((n_bat, T), nonneg=True)
     z       = cp.Variable((n_bat, T), boolean=True)
+
+    loss = cp.Variable((n_line, T), nonneg=True) if line_losses else None
 
     e_gen = []
     for g in range(n_gen):
@@ -82,6 +82,10 @@ def _solve_uc_miqp(grid, generators, batteries, bat_locs, T, outages, demand):
             constraints.append(soc[b, t] >= 0)
             constraints.append(soc[b, t] <= cap)
 
+    if line_losses:
+        R = np.array(grid.R, dtype=float).flatten()
+        Sbase = grid.Sbase
+
     for t in range(T):
         d_t = demand[:, t]
         inj = cp.Constant(np.zeros(n_bus))
@@ -91,11 +95,18 @@ def _solve_uc_miqp(grid, generators, batteries, bat_locs, T, outages, demand):
             inj = inj + (r_minus[b, t] - r_plus[b, t]) * e_bat[b]
 
         net = inj - d_t
-        constraints.append(cp.sum(net) == 0)
+        if line_losses:
+            constraints.append(cp.sum(net) == cp.sum(loss[:, t]))
+        else:
+            constraints.append(cp.sum(net) == 0)
 
         flow = PTDF @ net
         constraints.append(flow <=  fbar)
         constraints.append(flow >= -fbar)
+
+        if line_losses:
+            for l in range(n_line):
+                constraints.append(R[l] / Sbase * cp.square(flow[l]) <= loss[l, t])
 
     objective = cp.Minimize(sum(obj_terms))
     prob = cp.Problem(objective, constraints)
@@ -130,13 +141,15 @@ def run_uc(grid, generators, batteries, bat_locs, T, outages=None, line_losses=F
                  contingency (e.g. a documented single-generator-loss event)
                  rather than an economic commitment decision. Hours beyond T are
                  silently ignored. Defaults to no outages.
-    line_losses : if True, model I^2R transmission losses. Implemented as a
-                 fixed-point iteration: solve, compute each line's exact
-                 quadratic loss from the realized flow, inject half the loss
-                 as extra fixed demand at each line's two end buses, and
-                 re-solve — repeated until the injected loss stops changing
-                 (or MAX_LOSS_ITERS is hit). Defaults to False (a single
-                 solve, today's lossless DC power flow).
+    line_losses : if True, model I^2R transmission losses exactly, in one
+                 solve: each line gets a loss variable lower-bounded by the
+                 convex constraint loss_l >= R_l * flow_l**2 / Sbase (flow
+                 computed from raw generation - demand, no per-bus loss
+                 withdrawal needed), and the system power balance becomes
+                 sum(generation) - sum(demand) == sum(loss). Minimizing
+                 generation cost pulls each loss_l down to its tight value,
+                 so this is exact, not an approximation. Defaults to False
+                 (today's lossless DC power flow, single MIQP solve).
 
     Returns
     -------
@@ -155,42 +168,15 @@ def run_uc(grid, generators, batteries, bat_locs, T, outages=None, line_losses=F
             "— only one battery per node is allowed."
         )
 
-    base_demand = np.array(grid.power_demand)[:, :T]
-    loss_demand = np.zeros_like(base_demand)
-    max_iters = MAX_LOSS_ITERS if line_losses else 1
+    demand = np.array(grid.power_demand)[:, :T]
 
-    for _ in range(max_iters):
-        demand = base_demand + loss_demand
-        p_val, u_val, v_val, rp_val, rm_val, soc_val = _solve_uc_miqp(
-            grid, generators, batteries, bat_locs, T, outages, demand
-        )
-
-        if not line_losses:
-            break
-
-        flow = np.zeros((n_line, T))
-        for t in range(T):
-            inj_val = np.zeros(n_bus)
-            for g in range(n_gen):
-                inj_val[generators[g]["bus"] - 1] += p_val[g, t]
-            for b in range(n_bat):
-                inj_val[bat_locs[b] - 1] += rm_val[b, t] - rp_val[b, t]
-            flow[:, t] = PTDF @ (inj_val - demand[:, t])
-
-        new_loss_demand = np.zeros_like(base_demand)
-        for t in range(T):
-            loss_l = true_loss_mw(flow[:, t], grid.R, grid.Sbase)
-            new_loss_demand[:, t] = loss_allocation(loss_l, grid.Atilde)
-
-        if np.max(np.abs(new_loss_demand - loss_demand)) < LOSS_TOL_MW:
-            loss_demand = new_loss_demand
-            break
-        loss_demand = new_loss_demand
-
-    final_demand = base_demand + loss_demand
+    p_val, u_val, v_val, rp_val, rm_val, soc_val = _solve_uc_miqp(
+        grid, generators, batteries, bat_locs, T, outages, demand,
+        line_losses=line_losses,
+    )
 
     # ------------------------------------------------------------------
-    # Hourly costs, congested lines, and realized losses from the final solve
+    # Hourly costs, congested lines, and realized losses from the solve
     # ------------------------------------------------------------------
     hourly_costs = []
     for t in range(T):
@@ -211,7 +197,7 @@ def run_uc(grid, generators, batteries, bat_locs, T, outages=None, line_losses=F
             inj_val[generators[g]["bus"] - 1] += p_val[g, t]
         for b in range(n_bat):
             inj_val[bat_locs[b] - 1] += rm_val[b, t] - rp_val[b, t]
-        flow_val = PTDF @ (inj_val - final_demand[:, t])
+        flow_val = PTDF @ (inj_val - demand[:, t])
         congested = [i for i in range(len(fbar)) if abs(flow_val[i]) > fbar[i] * 0.999]
         congested_lines.append(congested)
         if line_losses:
