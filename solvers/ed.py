@@ -11,19 +11,14 @@ import numpy as np
 import cvxpy as cp
 
 from .results import EDResult
-from dcopf.losses import true_loss_mw, loss_allocation
-
-MAX_LOSS_ITERS = 6
-LOSS_TOL_MW = 1e-3  # convergence tolerance on per-bus loss injection
+from dcopf.losses import true_loss_mw
 
 
-def _solve_ed_qp(grid, generators, batteries, gen_locs, bat_locs, T, demand):
-    """Build and solve the ED QP for a given (fixed) demand matrix.
+def _solve_ed_qp(grid, generators, batteries, gen_locs, bat_locs, T, demand,
+                  line_losses=False):
+    """Build and solve the ED QP (or QCQP, if line_losses) for a given demand.
 
-    `demand` (n_bus, T) is a plain numpy array — when line losses are being
-    modeled iteratively, it already has the current loss estimate baked in
-    as extra fixed withdrawal, so this function itself has no notion of
-    losses and needs no per-iteration structural changes.
+    `demand` (n_bus, T) is a plain numpy array.
     """
     PTDF = np.array(grid.PTDF)
     fbar = np.array(grid.fbar).flatten()
@@ -31,11 +26,13 @@ def _solve_ed_qp(grid, generators, batteries, gen_locs, bat_locs, T, demand):
     n_gen = len(generators)
     n_bat = len(batteries)
     n_bus = PTDF.shape[1]
+    n_line = PTDF.shape[0]
 
     p = cp.Variable((n_gen, T), nonneg=True, name="p")
     r_plus  = cp.Variable((n_bat, T), nonneg=True, name="r_plus")
     r_minus = cp.Variable((n_bat, T), nonneg=True, name="r_minus")
     soc     = cp.Variable((n_bat, T), nonneg=True, name="soc")
+    loss = cp.Variable((n_line, T), nonneg=True, name="loss") if line_losses else None
 
     constraints = []
     objective_terms = []
@@ -58,11 +55,20 @@ def _solve_ed_qp(grid, generators, batteries, gen_locs, bat_locs, T, demand):
         net_inj = gen_inj_expr + bat_inj_expr
         d_t = demand[:, t]
 
-        constraints.append(cp.sum(net_inj) == cp.sum(d_t))
+        if line_losses:
+            constraints.append(cp.sum(net_inj) == cp.sum(d_t) + cp.sum(loss[:, t]))
+        else:
+            constraints.append(cp.sum(net_inj) == cp.sum(d_t))
 
         flow = PTDF @ (net_inj - d_t)
         constraints.append(flow <= fbar.flatten())
         constraints.append(flow >= -fbar.flatten())
+
+        if line_losses:
+            R = np.array(grid.R, dtype=float).flatten()
+            Sbase = grid.Sbase
+            for l in range(n_line):
+                constraints.append(R[l] / Sbase * cp.square(flow[l]) <= loss[l, t])
 
         for g, gen in enumerate(generators):
             constraints.append(p[g, t] >= gen["p_min"])
@@ -112,6 +118,8 @@ def _solve_ed_qp(grid, generators, batteries, gen_locs, bat_locs, T, demand):
     # ~1e-3 MW fuzz on the battery variables (charge and discharge both
     # slightly positive), which downstream checks read as simultaneous
     # charge/discharge.
+    # HiGHS can't handle the quadratic loss constraints (line_losses=True) —
+    # its SolverError is caught below and the chain falls through to SCIP.
     for solver_name, solver_opts in (
         ("CLARABEL", {"tol_gap_abs": 1e-10, "tol_gap_rel": 1e-10,
                       "tol_feas": 1e-10}),
@@ -150,66 +158,39 @@ def run_ed(grid, generators, batteries, gen_locs, bat_locs, T, line_losses=False
     gen_locs   : dict {gen_index: bus_number}  (buses 1-indexed)
     bat_locs   : dict {bat_index: bus_number}  (buses 1-indexed)
     T          : number of hours
-    line_losses : if True, model I^2R transmission losses. Implemented as a
-                 fixed-point iteration: solve, compute each line's exact
-                 quadratic loss from the realized flow, inject half the loss
-                 as extra fixed demand at each line's two end buses, and
-                 re-solve — repeated until the injected loss stops changing
-                 (or MAX_LOSS_ITERS is hit). Defaults to False (a single
-                 solve, today's lossless DC power flow).
+    line_losses : if True, model I^2R transmission losses exactly, in one
+                 solve: each line gets a loss variable lower-bounded by the
+                 convex constraint loss_l >= R_l * flow_l**2 / Sbase (flow
+                 computed from raw generation - demand, no per-bus loss
+                 withdrawal needed), and the system power balance becomes
+                 sum(generation) - sum(demand) == sum(loss). Minimizing
+                 generation cost pulls each loss_l down to its tight value,
+                 so this is exact, not an approximation. Defaults to False
+                 (today's lossless DC power flow, single QP solve).
 
     Returns
     -------
     EDResult
     """
-    PTDF = np.array(grid.PTDF)
-    fbar = np.array(grid.fbar).flatten()
-    base_demand = np.array(grid.power_demand)[:, :T]
-    n_bus = PTDF.shape[1]
-    n_line = PTDF.shape[0]
-
     if len(set(bat_locs.values())) != len(bat_locs):
         raise ValueError(
             f"bat_locs assigns more than one battery to the same bus: {bat_locs} "
             "— only one battery per node is allowed."
         )
 
-    loss_demand = np.zeros_like(base_demand)
-    max_iters = MAX_LOSS_ITERS if line_losses else 1
+    PTDF = np.array(grid.PTDF)
+    fbar = np.array(grid.fbar).flatten()
+    demand = np.array(grid.power_demand)[:, :T]
+    n_bus = PTDF.shape[1]
+    n_line = PTDF.shape[0]
 
-    for _ in range(max_iters):
-        demand = base_demand + loss_demand
-        p_val, rp_val, rm_val, soc_val = _solve_ed_qp(
-            grid, generators, batteries, gen_locs, bat_locs, T, demand
-        )
-
-        if not line_losses:
-            break
-
-        # Realized flow under this iteration's demand (base + loss so far)
-        flow = np.zeros((n_line, T))
-        for t in range(T):
-            net_inj_t = np.zeros(n_bus)
-            for g, gen in enumerate(generators):
-                net_inj_t[gen_locs[g] - 1] += p_val[g, t]
-            for b, bat in enumerate(batteries):
-                net_inj_t[bat_locs[b] - 1] += rm_val[b, t] - rp_val[b, t]
-            flow[:, t] = PTDF @ (net_inj_t - demand[:, t])
-
-        new_loss_demand = np.zeros_like(base_demand)
-        for t in range(T):
-            loss_l = true_loss_mw(flow[:, t], grid.R, grid.Sbase)
-            new_loss_demand[:, t] = loss_allocation(loss_l, grid.Atilde)
-
-        if np.max(np.abs(new_loss_demand - loss_demand)) < LOSS_TOL_MW:
-            loss_demand = new_loss_demand
-            break
-        loss_demand = new_loss_demand
-
-    final_demand = base_demand + loss_demand
+    p_val, rp_val, rm_val, soc_val = _solve_ed_qp(
+        grid, generators, batteries, gen_locs, bat_locs, T, demand,
+        line_losses=line_losses,
+    )
 
     # ------------------------------------------------------------------
-    # Congested lines, realized losses, and hourly costs from the final solve
+    # Congested lines, realized losses, and hourly costs from the solve
     # ------------------------------------------------------------------
     hourly_costs = []
     congested_lines = []
@@ -222,7 +203,7 @@ def run_ed(grid, generators, batteries, gen_locs, bat_locs, T, line_losses=False
         for b, bat in enumerate(batteries):
             net_inj_t[bat_locs[b] - 1] += rm_val[b, t] - rp_val[b, t]
 
-        flow_t = PTDF @ (net_inj_t - final_demand[:, t])
+        flow_t = PTDF @ (net_inj_t - demand[:, t])
 
         cong = [i for i in range(n_line) if abs(flow_t[i]) > fbar[i] * 0.999]
         congested_lines.append(cong)
