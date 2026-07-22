@@ -4,10 +4,12 @@
 # Per the PLEXOS side's 2026-07-17 email (Phase 3 - /Baseline_confirmation/
 # the PLEXOS side_EmaiJuly17l.md): "to confirm for the N-1 contingency, we agreed to
 # trip Generator 2 for the whole optimization horizon for simplicity" — a
-# full-horizon outage, not a mid-day trip. This differs from
-# use_cases/ieee14/4batt_dcbus4_g2out.py, which models a partial-day trip
-# (hours 14-24) for a different purpose (a realistic mid-day contingency
-# scenario) and is NOT meant to replicate this PLEXOS baseline.
+# full-horizon outage, not a mid-day trip. use_cases/ieee14/
+# 4batt_dcbus4_g2out.py originally modeled a partial-day trip (hours 14-24)
+# for a different purpose (a realistic mid-day contingency scenario), but
+# was changed to full-horizon on 2026-07-21 so both files use the same
+# convention; see Phase 3 - /Contingencies/contingencies.md for the current
+# writeup of both scenarios.
 #
 # Otherwise identical to nobatt_dcbus4.py in this folder (no batteries,
 # 200 MW flat datacenter at bus 4, p_min matching PLEXOS's fixed-dispatch
