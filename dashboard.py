@@ -428,7 +428,11 @@ def _siting_key(use_case, assets_file, T, time_limit, line_losses=False, loss_to
 def _cached_siting(use_case, assets_file, T, time_limit, line_losses=False, loss_top_k=10):
     v = _cached_view("Siting", _siting_key(use_case, assets_file, T, time_limit,
                                            line_losses, loss_top_k))
-    return (v[0], v[1], v[2]) if v else (_NOT_RUN, "", [])
+    if not v:
+        return _NOT_RUN, "", [], pd.DataFrame()
+    summary, text, plots, rec = v
+    table = pd.DataFrame(rec.get("table_rows", []))
+    return summary, text, plots, table
 
 
 def _quantum_key(use_case, assets_file, T, backend_label, sampling_label, n_candidates,
@@ -547,7 +551,9 @@ def run_siting_tab(use_case: str, assets_file: str, T: float, time_limit: float,
         cached = _cached_view("Siting", _siting_key(use_case, assets_file, T, time_limit,
                                                      line_losses, loss_top_k))
         if cached is not None:
-            return cached[0], cached[1], cached[2], _history_table()
+            summary, text, plots, rec = cached
+            table = pd.DataFrame(rec.get("table_rows", []))
+            return summary, text, plots, table, _history_table()
 
     def solve(grid, assets_mod, loc_mod, dc_bus, dc_mw):
         from solvers.siting_benders import run_siting_benders
@@ -569,6 +575,8 @@ def run_siting_tab(use_case: str, assets_file: str, T: float, time_limit: float,
 
     result, text, plots, log_path = _execute("siting", "Siting", use_case,
                                              assets_file, T, solve)
+    table = pd.DataFrame()
+    extra = None
     if result is None:
         gr.Warning("Siting run failed — open the Terminal sub-tab for the traceback.")
         summary, plain = "### Run failed — see Terminal sub-tab", "FAILED"
@@ -581,10 +589,18 @@ def run_siting_tab(use_case: str, assets_file: str, T: float, time_limit: float,
                    f"at **${result.total_cost:,.0f}** ({label})")
         if line_losses and result.uc_result.total_losses_mw:
             summary += f"  \n(losses: {sum(result.uc_result.total_losses_mw):,.1f} MWh, top {loss_top_k} candidates re-solved)"
+        if result.ranked:
+            table = pd.DataFrame({
+                "Rank": list(range(1, len(result.ranked) + 1)),
+                "Buses": [str(bus_tuple) for bus_tuple, _ in result.ranked],
+                "Total cost ($)": [f"{cost:,.0f}" for _, cost in result.ranked],
+            })
+            extra = {"table_rows": table.to_dict("records")}
     history = _finish_run("Siting", use_case, assets_file, T, plain, log_path, plots,
                           key=_siting_key(use_case, assets_file, T, time_limit,
-                                          line_losses, loss_top_k))
-    return summary, text, plots, history
+                                          line_losses, loss_top_k),
+                          extra=extra)
+    return summary, text, plots, table, history
 
 
 class _CommitShim:
@@ -903,6 +919,9 @@ def build_app() -> gr.Blocks:
             _st0 = _cached_siting(st_uc.value, st_assets.value, st_T.value, st_limit.value,
                                   st_losses.value, st_loss_topk.value)
             st_summary = gr.Markdown(_st0[0])
+            with gr.Tab("📋 Results"):
+                st_table = gr.Dataframe(value=_st0[3], label="Candidate ranking",
+                                        interactive=False)
             with gr.Tab("📈 Plots"):
                 st_plots = gr.State(_st0[2])
                 _resizable_plots(st_plots)
@@ -1018,7 +1037,7 @@ def build_app() -> gr.Blocks:
                      outputs=[uc_summary, uc_term, uc_plots, hist_table])
         st_btn.click(run_siting_tab,
                      inputs=[st_uc, st_assets, st_T, st_limit, st_losses, st_loss_topk, st_force],
-                     outputs=[st_summary, st_term, st_plots, hist_table])
+                     outputs=[st_summary, st_term, st_plots, st_table, hist_table])
         q_btn.click(
             run_quantum_tab,
             inputs=[q_uc, q_assets, q_T, q_backend, q_sampling, q_ncand, q_stage, q_warm,

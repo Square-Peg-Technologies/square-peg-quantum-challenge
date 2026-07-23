@@ -42,6 +42,10 @@ class SitingMIPResult:
     total_cost: float
     scip_status: str = "optimal"  # "optimal" | "timelimit" | "stalled"
     runtime_phases: dict = None   # {phase_label: seconds} — wall-time breakdown
+    ranked: list = None           # [(bus_tuple, total_cost), ...] every placement
+                                   # evaluated during the search, sorted ascending
+                                   # by cost — None for solvers that don't track
+                                   # a candidate pool (e.g. the exact one-shot MIP)
 
 
 @dataclass

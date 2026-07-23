@@ -399,6 +399,12 @@ def print_results(
             for phase_label, sec in result.runtime_phases.items():
                 pct = 100.0 * sec / total if total > 0 else 0.0
                 print(f"  {phase_label:<42} {sec:>8.1f}s  ({pct:>4.1f}%)")
+        if result.ranked:
+            print(f"\nTop {min(20, len(result.ranked))} placements evaluated during the search (ranked by cost):")
+            print(f"{'Rank':<6} {'Buses':<24} {'Total Cost ($)':>16}")
+            print("-" * 50)
+            for rank, (bus_tuple, cost) in enumerate(result.ranked[:20], start=1):
+                print(f"{rank:<6} {str(bus_tuple):<24} {cost:>16,.0f}")
         result = result.uc_result   # fall through to UC display below
 
     if isinstance(result, SitingResult):

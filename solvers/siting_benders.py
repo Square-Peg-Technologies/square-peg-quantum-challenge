@@ -294,15 +294,22 @@ def run_siting_benders(
             "Benders found no feasible solution within the time limit"
         )
 
+    # Every distinct placement the Benders search evaluated, ranked ascending
+    # by (lossless) cost — lets callers show a top-N table, not just the winner.
+    ranked_all = sorted(
+        ((bus_tuple_key, cost) for bus_tuple_key, (_locs, cost, _res) in all_candidates.items()),
+        key=lambda item: item[1],
+    )
+
     t_loss = 0.0
     if line_losses:
         from solvers.uc import run_uc
         _t0 = time.perf_counter()
-        ranked = sorted(all_candidates.values(), key=lambda item: item[1])[:loss_top_k]
+        top_lossless = sorted(all_candidates.values(), key=lambda item: item[1])[:loss_top_k]
         loss_best_cost = float("inf")
         loss_best_result = None
         loss_best_locs = None
-        for bat_locs, _lossless_cost, _ in ranked:
+        for bat_locs, _lossless_cost, _ in top_lossless:
             r = run_uc(orig_grid, generators, batteries, bat_locs, T, line_losses=True)
             if r.total_cost < loss_best_cost:
                 loss_best_cost = r.total_cost
@@ -328,7 +335,7 @@ def run_siting_benders(
         "Cut management + overhead": max(0.0, elapsed - t_master - t_uc - t_loss),
     }
     if line_losses:
-        runtime_phases[f"Loss-aware re-solve (top {len(ranked)} candidates)"] = t_loss
+        runtime_phases[f"Loss-aware re-solve (top {len(top_lossless)} candidates)"] = t_loss
 
     return SitingMIPResult(
         bus_tuple   = bus_tuple,
@@ -336,5 +343,6 @@ def run_siting_benders(
         uc_result   = best_result,
         total_cost  = best_cost,
         scip_status = scip_status,
+        ranked      = ranked_all,
         runtime_phases = runtime_phases,
     )
