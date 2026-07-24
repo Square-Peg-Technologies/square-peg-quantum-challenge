@@ -106,7 +106,7 @@ def _run_one_trial(
 ) -> dict:
     """Run one VQA trial. Returns dict with candidates, convergence_trace, wall_time."""
     t0 = time.perf_counter()
-    candidates, trace = run_vqa_qiskit(
+    candidates, trace, _meta = run_vqa_qiskit(
         n_qubits_gen=n_qubits_gen,
         n_qubits_bat=n_qubits_bat,
         proxy_fn=proxy_fn,

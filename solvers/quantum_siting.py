@@ -11,6 +11,7 @@ Reference: arXiv:2505.00145 (IonQ/ORNL, Aboumrad et al., 2025)
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
 from typing import Callable
@@ -361,7 +362,7 @@ def run_vqa_qiskit(
     final_backend: str = "local",
     final_shots: int | None = None,
 ) -> tuple[list[tuple], list[float]]:
-    """Run COBYLA VQA and return (candidates, convergence_trace).
+    """Run COBYLA VQA and return (candidates, convergence_trace, quantum_meta).
 
     final_backend: "local" (default — final shots sampled on the same local
         Aer/Qiskit sampler used for training) or "ionq_qbraid" (COBYLA
@@ -456,11 +457,18 @@ def run_vqa_qiskit(
             demand_ref=_sdp_ingredients["demand_ref"],
             T=_sdp_ingredients["T"],
         )
-        # x_star has shape (n_qubits,); β block has shape (n_layers * n_qubits,)
-        # tile across layers so each layer's RY gates start at the warm-start angle
+        # x_star has shape (n_qubits,); β block has shape (n_layers * n_qubits,).
+        # At theta0 the γ (entangling) params are all 0, i.e. identity, so the
+        # n_layers separate RY(β) rotations on each qubit compose ADDITIVELY
+        # into one net rotation. Divide the per-qubit target angle by n_layers
+        # before tiling so that net rotation lands on the intended angle
+        # (single-shot P(1) = x_star), rather than n_layers times too much
+        # (e.g. n_layers=3, x_star=0.286 gives intended weight 4/14 but an
+        # undivided tile gives P(1)=0.985 per qubit, i.e. an initial Hamming
+        # weight of ~13.8/14 — nearly the opposite of the intended warm start).
         x_star_tiled = np.tile(x_star, n_layers)
         theta0 = np.zeros(len(params))
-        theta0[n_gamma:] = 2.0 * np.arcsin(np.sqrt(np.clip(x_star_tiled, 0.0, 1.0)))
+        theta0[n_gamma:] = 2.0 * np.arcsin(np.sqrt(np.clip(x_star_tiled, 0.0, 1.0))) / n_layers
     else:
         raise ValueError(f"Unknown warm_start strategy: {warm_start!r}")
 
@@ -532,20 +540,45 @@ def run_vqa_qiskit(
         _dbg.debug("COBYLA stopped early via plateau detection at nfev=%d", len(convergence_trace))
     t_opt = time.perf_counter() - t_opt_start
 
-    # Final shot sample — locally (5000 shots) unless final_backend="ionq_qbraid",
-    # in which case this is the one real qBraid/IonQ submission in the whole run.
+    # Final shot sample — locally (5000 shots) unless final_backend is one of
+    # the "ionq_qbraid*" values, in which case this is the one real qBraid/IonQ
+    # submission in the whole run (noisy=True applies the Forte-1 noise model).
     t_final_start = time.perf_counter()
     final_qc = qc.assign_parameters(dict(zip(params, xopt)))
-    if final_backend == "ionq_qbraid":
+    if final_backend in ("ionq_qbraid", "ionq_qbraid_noise"):
         from solvers.ionq_qbraid_backend import run_circuit_shots, default_shots, DEVICE_ID
         if final_shots is None:
             final_shots = default_shots(DEVICE_ID)
-        counts = run_circuit_shots(final_qc, shots=final_shots)
+        counts = run_circuit_shots(final_qc, shots=final_shots,
+                                    noisy=(final_backend == "ionq_qbraid_noise"))
+        final_shots_used = final_shots
     elif final_backend == "local":
-        job = sampler.run([final_qc], shots=5000)
+        final_shots_used = 5000
+        job = sampler.run([final_qc], shots=final_shots_used)
         counts = job.result()[0].data.meas.get_counts()
     else:
-        raise ValueError(f"Unknown final_backend: {final_backend!r} (use 'local' or 'ionq_qbraid')")
+        raise ValueError(
+            f"Unknown final_backend: {final_backend!r} "
+            "(use 'local', 'ionq_qbraid', or 'ionq_qbraid_noise')"
+        )
+
+    # Diagnostic: shot-weighted Hamming-weight histogram of the battery (s)
+    # register, so we can empirically estimate P(weight==B) per shot and back
+    # out how many shots are needed for a target confidence of at least one
+    # feasible (weight==B) sample — critical when final shots are expensive
+    # (billed real QPU hardware) and can't just be increased freely.
+    _weight_hist: dict[int, int] = {}
+    _total_shots = 0
+    for bs, cnt in counts.items():
+        bs_ordered = bs[::-1]
+        s_bits = bs_ordered[n_qubits_gen:]
+        w = sum(int(b) for b in s_bits)
+        _weight_hist[w] = _weight_hist.get(w, 0) + cnt
+        _total_shots += cnt
+    _dbg.debug(
+        "Final-shot s-register Hamming-weight histogram (total shots=%d): %s",
+        _total_shots, dict(sorted(_weight_hist.items())),
+    )
 
     # Collect all unique bitstrings with their proxy costs
     seen: dict[str, float] = {}
@@ -578,7 +611,16 @@ def run_vqa_qiskit(
         else:
             phase_times["Final 5000-shot extraction"] = time.perf_counter() - t_final_start
 
-    return candidates, convergence_trace
+    quantum_meta = {
+        "n_qubits": n_qubits,
+        "n_params": len(params),
+        "shots_cobyla": n_shots_cobyla,
+        "shots_final": final_shots_used,
+        "final_qc": final_qc,
+        "xopt": xopt,
+    }
+
+    return candidates, convergence_trace, quantum_meta
 
 
 # ---------------------------------------------------------------------------
@@ -646,12 +688,17 @@ def evaluate_candidates(
     batteries: list[dict],
     T: int,
     second_stage: str,
+    line_losses: bool = False,
 ) -> list[tuple]:
     """Evaluate each (u_bits, s_bits, proxy_cost) candidate via ED or UC.
 
     Returns list of (bat_locs, commitment, true_cost, result_obj).
     Candidates are evaluated in parallel using all available CPU cores.
     second_stage: "ed" | "uc"
+    line_losses: if True, solves with the loss-aware ED/UC model
+        (_GridData carries R/Sbase so this still runs through the parallel
+        worker pool, unlike reevaluate_with_losses which runs sequentially
+        against the live Case object).
 
     Workers use the "spawn" start method rather than "fork" for a clean
     process start (each worker re-imports what it needs instead of
@@ -691,7 +738,7 @@ def evaluate_candidates(
             if bat_locs_key in seen_bat_locs:
                 continue
             seen_bat_locs.add(bat_locs_key)
-        work_items.append((bat_locs, commitment, grid_data, generators, batteries, T, second_stage))
+        work_items.append((bat_locs, commitment, grid_data, generators, batteries, T, second_stage, line_losses))
 
     results = []
     if not work_items:
@@ -810,8 +857,11 @@ def run_quantum_siting(
 
     if sim_method not in ("statevector", "tensor_network"):
         raise ValueError(f"Unknown sim_method: {sim_method!r} (use 'statevector' or 'tensor_network')")
-    if final_backend not in ("local", "ionq_qbraid"):
-        raise ValueError(f"Unknown final_backend: {final_backend!r} (use 'local' or 'ionq_qbraid')")
+    if final_backend not in ("local", "ionq_qbraid", "ionq_qbraid_noise"):
+        raise ValueError(
+            f"Unknown final_backend: {final_backend!r} "
+            "(use 'local', 'ionq_qbraid', or 'ionq_qbraid_noise')"
+        )
 
     # We wrap proxy_fn with feasibility filter via the sieve. The sieve
     # returns top candidates regardless of feasibility; we rely on
@@ -826,7 +876,7 @@ def run_quantum_siting(
             "demand_ref": demand_ref,
             "T": T,
         }
-    raw_candidates, convergence_trace = run_vqa_qiskit(
+    raw_candidates, convergence_trace, quantum_meta = run_vqa_qiskit(
         n_qubits_gen=G,
         n_qubits_bat=n_buses,
         proxy_fn=proxy_fn,
@@ -899,4 +949,9 @@ def run_quantum_siting(
         warm_start=warm_start,
         convergence_trace=convergence_trace if track_convergence else None,
         runtime_phases=runtime_phases,
+        n_qubits=quantum_meta["n_qubits"],
+        n_params=quantum_meta["n_params"],
+        shots_cobyla=quantum_meta["shots_cobyla"],
+        shots_final=quantum_meta["shots_final"],
+        search_space_size=math.comb(n_buses, B),
     )

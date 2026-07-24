@@ -254,7 +254,8 @@ def prompt_quantum_options() -> tuple[str, str, int, str, str]:
     while True:
         print("Sample final shots on:")
         print("  1. Local (same simulator used for training)")
-        print("  2. IonQ via qBraid (real hardware/simulator — spends qBraid credits)")
+        print("  2. IonQ via qBraid (real hardware/simulator — free simulator, QPU spends credits)")
+        print("  3. IonQ via qBraid (Forte-1 noise model — free simulator)")
         raw = input("Enter number: ").strip()
         if raw == "1":
             final_backend = "local"
@@ -262,7 +263,10 @@ def prompt_quantum_options() -> tuple[str, str, int, str, str]:
         elif raw == "2":
             final_backend = "ionq_qbraid"
             break
-        print("Invalid selection. Please enter 1 or 2.")
+        elif raw == "3":
+            final_backend = "ionq_qbraid_noise"
+            break
+        print("Invalid selection. Please enter 1, 2, or 3.")
 
     while True:
         raw = input("How many candidates to evaluate classically? [default: 10]: ").strip()
@@ -314,14 +318,23 @@ def prompt_quantum_options() -> tuple[str, str, int, str, str]:
 def print_quantum_results(result: "QuantumSitingResult") -> None:
     sim_label = {"statevector": "Qiskit VQA", "tensor_network": "Aer TN (VQA)"}.get(
         result.sim_method, result.sim_method)
-    backend_label = f"{sim_label} → IonQ (qBraid29sim)" if result.final_backend == "ionq_qbraid" else sim_label
+    _ionq_suffix = {
+        "ionq_qbraid": " → IonQ (qBraid29sim)",
+        "ionq_qbraid_noise": " → IonQ (qBraid29sim, noise)",
+    }.get(result.final_backend, "")
+    backend_label = f"{sim_label}{_ionq_suffix}"
     stage_label = "ED" if result.second_stage == "ed" else "UC"
 
     warm_label = {"zeros": "θ=0 (paper sim default)", "random": "θ~Uniform[-2π,2π] (paper hardware)", "sdp": "LP-relaxation (paper Sec III)"}.get(result.warm_start, result.warm_start)
     print(f"\nQuantum Siting Results ({backend_label} + {stage_label} refinement)")
     print(f"Warm-start:                {warm_label}")
+    if result.n_qubits is not None:
+        print(f"Qubits / params:            {result.n_qubits} / {result.n_params}")
+        print(f"Shots — COBYLA / final:    {result.shots_cobyla} / {result.shots_final}")
     print(f"Quantum candidates found:   {len(result.quantum_candidates)}")
-    print(f"Candidates evaluated:       {len(result.evaluated)}")
+    print(f"Candidates evaluated:       {len(result.evaluated)}"
+          + (f"  (of {result.search_space_size} total placements)"
+             if result.search_space_size else ""))
     print(f"Runtime — quantum sieve:    {result.runtime_quantum:.1f}s")
     print(f"Runtime — classical stage:  {result.runtime_classical:.1f}s")
     if result.runtime_phases:
@@ -579,10 +592,12 @@ def main():
                 print("Aer: using CPU statevector")
             else:
                 print("Aer: not installed — using Qiskit StatevectorSampler")
-        if final_backend == "ionq_qbraid":
-            from solvers.ionq_qbraid_backend import DEVICE_ID
-            print(f"IonQ (qBraid29sim): training locally, final shots on device {DEVICE_ID!r} "
-                  "(this submits a real job and spends qBraid credits)")
+        if final_backend in ("ionq_qbraid", "ionq_qbraid_noise"):
+            from solvers.ionq_qbraid_backend import DEVICE_ID, FREE_SIMULATOR_ID, NOISE_MODEL_ID
+            noise_tag = f" with {NOISE_MODEL_ID} noise model" if final_backend == "ionq_qbraid_noise" else ""
+            cost_tag = "free simulator" if DEVICE_ID == FREE_SIMULATOR_ID else "spends qBraid credits"
+            print(f"IonQ (qBraid29sim): training locally, final shots on device "
+                  f"{DEVICE_ID!r}{noise_tag} (this submits a real job — {cost_tag})")
         print(f"Warm-start: {warm_start}")
         result = run_quantum_siting(
             grid=grid,

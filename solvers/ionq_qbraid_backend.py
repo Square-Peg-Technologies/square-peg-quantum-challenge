@@ -41,13 +41,35 @@ FREE_SIMULATOR_ID = "ionq:ionq:sim:simulator"
 # and avoid spurious infeasible candidates from an under-sampled distribution.
 DEFAULT_SHOTS_SIMULATOR = 5000
 
+# Noise model applied when run_circuit_shots(..., noisy=True) is used: still
+# the same simulator device (capped at 29 qubits regardless of noise model —
+# the model only changes the error channel, not the device or qubit count).
+#
+# qBraid's device.profile.noise_models for "ionq:ionq:sim:simulator" reports
+# only {"aria-1", "harmony", "ideal"} (verified 2026-07-24) — stale catalog
+# metadata on qBraid's side: "harmony" was retired by IonQ in July 2025, while
+# "forte-1" (IonQ's current, actively-supported noise model per
+# docs.ionq.com/features/simulation-with-noise-models) is missing from it.
+# Confirmed empirically that qBraid's *backend* accepts "forte-1" fine — only
+# the client-side membership check in _resolve_noise_model rejects it — so
+# run_circuit_shots force-registers "forte-1" into the profile's noise_models
+# set before submitting, to work around the stale client-side list.
+#
+# Also verified 2026-07-24: this qBraid SDK version (0.12.2) has no seed
+# parameter anywhere in the IonQ noise-model code path — noisy runs are not
+# reproducible via a fixed seed the way IonQ's direct API allows.
+NOISE_MODEL_ID = "forte-1"
+
 # Default shots on billed real hardware (e.g. Forte 1), at 3 credits/task +
-# 8 credits/shot: 500 shots = 4,003 credits (~$40 at 10,000 credits/$100).
-# Empirically (2026-07-14, ieee14/4batt_dcbus4, 24h) 500 shots already finds
-# the same top-ranked placement as 5000 shots; 250 shots and below is not
-# reliable (too few valid post-selected candidates). Only ~4% of a 10,000
-# credit budget per run, vs. ~40% for 5000 shots.
-DEFAULT_SHOTS_HARDWARE = 500
+# 8 credits/shot: 100 shots = 803 credits (~$8 at 10,000 credits/$100, ~8% of
+# a 10,000 credit budget per run). Set from the shots-vs-optimality-gap sweep
+# (solvers/stop_conditions.md, 2026-07-24, ieee14/4batt_dcbus4_g2out.py,
+# forte-1 noise, line_losses=True): feasibility is ~100% by 25 shots already,
+# and the optimality gap vs. the best-found placement drops sharply through
+# ~100 shots (0.079% median at 25 shots -> 0.032% at 100 shots) then flattens
+# hard (0.032% at 100 -> 0.018% at 500) — the last 5x more shots buys a much
+# smaller further improvement than the first 100 shots did.
+DEFAULT_SHOTS_HARDWARE = 100
 
 
 def default_shots(device_id: str = None) -> int:
@@ -95,7 +117,7 @@ def get_device(device_id: str = DEVICE_ID):
 
 
 def run_circuit_shots(circuit, shots: int | None = None, device_id: str = DEVICE_ID,
-                      timeout: int = 600) -> dict[str, int]:
+                      timeout: int = 600, noisy: bool = False) -> dict[str, int]:
     """Submit a Qiskit circuit to the qBraid-routed IonQ device and return counts.
 
     circuit must already include measurement (e.g. built with .measure_all(),
@@ -107,6 +129,10 @@ def run_circuit_shots(circuit, shots: int | None = None, device_id: str = DEVICE
     500 on billed real hardware — rather than a single fixed constant, so
     switching DEVICE_ID to Forte 1 doesn't silently also switch you to a
     5000-shot bill.
+
+    noisy=True applies NOISE_MODEL_ID's hardware noise model to the simulation
+    instead of running the ideal simulator (still on the same free simulator
+    device, not real QPU hardware).
     """
     if shots is None:
         shots = default_shots(device_id)
@@ -114,7 +140,16 @@ def run_circuit_shots(circuit, shots: int | None = None, device_id: str = DEVICE
         raise ValueError(f"shots={shots} is below IonQ's minimum of {MIN_SHOTS}.")
 
     device = get_device(device_id)
-    job = device.run(circuit, shots=shots)
+    if noisy:
+        if NOISE_MODEL_ID not in device.profile.noise_models:
+            # qBraid's device catalog is stale and doesn't list NOISE_MODEL_ID
+            # even though qBraid's backend accepts it fine (see NOISE_MODEL_ID
+            # comment above) — register it locally so the SDK's client-side
+            # membership check in _resolve_noise_model doesn't reject it.
+            device.profile.noise_models.add(NOISE_MODEL_ID)
+        job = device.run(circuit, shots=shots, runtime_options={"noise_model": NOISE_MODEL_ID})
+    else:
+        job = device.run(circuit, shots=shots)
 
     job.wait_for_final_state(timeout=timeout, poll_interval=5)
     status = job.status()

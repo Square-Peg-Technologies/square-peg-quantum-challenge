@@ -62,3 +62,8 @@ class QuantumSitingResult:
     warm_start: str = "zeros"      # "zeros" | "random" | "sdp"
     convergence_trace: list = None  # COBYLA objective per iteration (Qiskit path only)
     runtime_phases: dict = None    # {phase_label: seconds} — ordered wall-time breakdown
+    n_qubits: int = None           # n_qubits_gen + n_qubits_bat
+    n_params: int = None           # ansatz parameter count (2 x n_layers x n_qubits)
+    shots_cobyla: int = None       # shots per COBYLA training iteration
+    shots_final: int = None        # shots for the final extraction (local or IonQ/qBraid)
+    search_space_size: int = None  # math.comb(n_buses, n_batteries) — full placement space

@@ -540,6 +540,12 @@ itself does not depend on T.
   no voltage magnitude/angle constraints. Line losses are a known, deliberately
   scoped-out gap (see repo TODO) — Plexos comparisons use resistance-based
   losses, this model does not.
+- Unit Commitment models per-generator on/off commitment with no-load and
+  startup costs (`solvers/uc.py`), but has no ramp-rate constraints and no
+  minimum up/down time constraints — two features standard in full commercial
+  UC formulations (e.g. PLEXOS). This is a genuine mixed-integer QP (binary
+  commitment + startup cost, solved via SCIP branch-and-bound), not reducible
+  to a linear program, but it is a reduced UC formulation, not full UC.
 - The quantum sieve is a proxy-cost pre-filter, not an end-to-end quantum
   optimizer: it narrows the search space analytically, then a classical
   UC/ED solve picks the winner. The quantum step's role is candidate

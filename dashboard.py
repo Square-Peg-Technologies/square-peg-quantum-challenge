@@ -45,10 +45,12 @@ HISTORY_PATH = os.path.join(OUT_DIR, "dashboard_history.json")
 # Short labels so dropdowns don't get cut off; full descriptions go in info=
 BACKEND_CHOICES = ["Qiskit", "Aer TN"]
 BACKEND_INFO = "Qiskit = local CPU statevector · Aer TN = tensor-network MPS (scales to 36+ qubits)"
-SAMPLING_CHOICES = ["Local", "IonQ (qBraid29sim)"]
+SAMPLING_CHOICES = ["Local", "IonQ (qBraid29sim)", "IonQ (qBraid29sim, noise)"]
 SAMPLING_INFO = ("Local = same simulator as training (free) · "
-                 "IonQ (qBraid29sim) = real qBraid-routed IonQ hardware/simulator "
-                 "for the final shot sample (spends qBraid credits)")
+                 "IonQ (qBraid29sim) = real qBraid-routed IonQ simulator "
+                 "for the final shot sample (free — only real QPU hardware bills credits) · "
+                 "IonQ (qBraid29sim, noise) = same, with the Forte-1 hardware "
+                 "noise model applied (also free)")
 STAGE_CHOICES = ["ED", "UC"]
 STAGE_INFO = "ED: fix commitment + placement · UC: re-solve commitment, fix placement"
 WARM_START_CHOICES = ["zeros", "random", "sdp"]
@@ -678,6 +680,8 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
         final_backend = "local"
     elif sampling_label == "IonQ (qBraid29sim)":
         final_backend = "ionq_qbraid"
+    elif sampling_label == "IonQ (qBraid29sim, noise)":
+        final_backend = "ionq_qbraid_noise"
     else:
         raise gr.Error(f"Unknown sampling backend: {sampling_label!r}")
     second_stage = "ed" if second_stage_label.startswith("ED") else "uc"
@@ -695,7 +699,7 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
                                "install qiskit-aer with tensor-network support.")
         except ImportError:
             raise gr.Error("qiskit-aer is not installed.")
-    if final_backend == "ionq_qbraid":
+    if final_backend.startswith("ionq_qbraid"):
         try:
             from solvers.ionq_qbraid_backend import _load_token
             _load_token()
@@ -732,10 +736,12 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
             else:
                 print("Aer: not installed — using Qiskit StatevectorSampler (CPU)")
         print(f"Ansatz: {ansatz_label}  |  Warm-start: {warm_start}")
-        if final_backend == "ionq_qbraid":
-            from solvers.ionq_qbraid_backend import DEVICE_ID
+        if final_backend.startswith("ionq_qbraid"):
+            from solvers.ionq_qbraid_backend import DEVICE_ID, FREE_SIMULATOR_ID, NOISE_MODEL_ID
+            noise_tag = f" with {NOISE_MODEL_ID} noise model" if final_backend == "ionq_qbraid_noise" else ""
+            cost_tag = "free simulator" if DEVICE_ID == FREE_SIMULATOR_ID else "spends qBraid credits"
             print(f"IonQ (qBraid29sim): training locally above, final shots on device "
-                  f"{DEVICE_ID!r} (real job, spends qBraid credits)")
+                  f"{DEVICE_ID!r}{noise_tag} (real job, {cost_tag})")
         result = run_quantum_siting(
             grid=grid, generators=assets_mod.GENERATORS, batteries=assets_mod.BATTERIES,
             T=T, sim_method=sim_method, final_backend=final_backend, n_candidates=n_candidates,
@@ -779,8 +785,12 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
     summary = (
         f"### Quantum Siting — best placement **buses {tuple(best_locs.values())}** "
         f"at **${best_cost:,.0f}**\n"
-        f"{len(result.evaluated)}/{len(result.quantum_candidates)} candidates feasible · "
-        f"sieve {result.runtime_quantum:.1f}s · refinement {result.runtime_classical:.1f}s"
+        f"{len(result.evaluated)}/{len(result.quantum_candidates)} candidates feasible"
+        + (f" (of {result.search_space_size} total placements)" if result.search_space_size else "")
+        + f" · sieve {result.runtime_quantum:.1f}s · refinement {result.runtime_classical:.1f}s"
+        + (f"  \n{result.n_qubits} qubits, {result.n_params} params · "
+           f"shots: {result.shots_cobyla} (COBYLA) / {result.shots_final} (final)"
+           if result.n_qubits is not None else "")
     )
     if line_losses and getattr(best_res, "total_losses_mw", None):
         summary += f"  \n(losses: {sum(best_res.total_losses_mw):,.1f} MWh, all {len(result.evaluated)} candidates re-solved)"
@@ -945,7 +955,7 @@ def build_app() -> gr.Blocks:
                         value=_migrate_sampling_label(_setting("quantum", "sampling", None),
                                                       _default_sampling()),
                         label="Sampling", info=SAMPLING_INFO)
-                q_ncand = gr.Slider(1, 30, value=_setting("quantum", "n_candidates", 10),
+                q_ncand = gr.Slider(1, 300, value=_setting("quantum", "n_candidates", 10),
                                     step=1, label="Candidates")
                 q_stage = gr.Dropdown(
                     STAGE_CHOICES,
@@ -962,7 +972,7 @@ def build_app() -> gr.Blocks:
                     value=_setting("quantum", "ansatz", "Auto"),
                     label="Ansatz",
                     info="Auto: butterfly for statevector, linear-chain for Aer TN")
-                q_limit = gr.Number(value=_setting("quantum", "max_time_s", 60),
+                q_limit = gr.Number(value=_setting("quantum", "max_time_s", 900),
                                     label="Time limit (s)", scale=0, min_width=130)
                 q_losses = gr.Checkbox(value=_setting("quantum", "line_losses", False),
                                        label="Line Losses", scale=0, min_width=130)
@@ -970,8 +980,12 @@ def build_app() -> gr.Blocks:
                                       scale=0, min_width=150)
                 q_btn = gr.Button("▶ Run", variant="primary", scale=0, min_width=120)
             gr.Markdown(
-                "_Suggested limits: **pjm5** → 30–60 s · **ieee14** → 60–120 s · "
-                "**ieee30 (Aer TN)** → 60–90 s (CPU MPS — longer will overheat). "
+                "_Time limit is a safety ceiling, not a target — COBYLA stops on its own "
+                "once it genuinely plateaus (114 evaluations with no improvement) or "
+                "exhausts its evaluation budget, whichever comes first. Default (900s) is "
+                "set generously so the limit should rarely if ever be the actual stopping "
+                "reason; check the run log for 'plateau detection' vs. hitting the time "
+                "limit with a low iteration count to tell which one fired. "
                 "Applies to the VQA optimisation loop. "
                 "Line Losses keeps the quantum sieve and classical refinement lossless, "
                 "then re-solves all evaluated Candidates with losses on (the Candidates "

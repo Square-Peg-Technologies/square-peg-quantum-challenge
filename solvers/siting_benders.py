@@ -26,13 +26,22 @@ from .results import SitingMIPResult, UCResult
 # ---------------------------------------------------------------------------
 
 class _GridData:
-    """Plain numpy-only snapshot of a Case object — safe to pickle for workers."""
-    __slots__ = ("PTDF", "fbar", "power_demand")
+    """Plain numpy-only snapshot of a Case object — safe to pickle for workers.
+
+    Includes R/Sbase (per-line resistance, base power) so line-losses-aware
+    UC/ED solves (which need grid.R / grid.Sbase — see solvers/uc.py,
+    solvers/ed.py) can also run through the parallel worker pool, instead of
+    being forced to run sequentially against the live, unpicklable Case
+    object.
+    """
+    __slots__ = ("PTDF", "fbar", "power_demand", "R", "Sbase")
 
     def __init__(self, grid):
         self.PTDF          = np.array(grid.PTDF)
         self.fbar          = np.array(grid.fbar)
         self.power_demand  = np.array(grid.power_demand)
+        self.R             = np.array(grid.R)
+        self.Sbase         = grid.Sbase
 
 
 # ---------------------------------------------------------------------------
