@@ -1,0 +1,149 @@
+{
+  "noiseless_line_losses": [
+    {
+      "shots": 25,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0,
+      "median_gap": 0.0009968151954136064,
+      "p95_gap": 0.00205125981359023
+    },
+    {
+      "shots": 50,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.005,
+      "median_gap": 0.0005266238667352363,
+      "p95_gap": 0.0011292548341261992
+    },
+    {
+      "shots": 75,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.005,
+      "median_gap": 0.0006003534598996317,
+      "p95_gap": 0.0011708996603894254
+    },
+    {
+      "shots": 100,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0075,
+      "median_gap": 0.0005028698195524422,
+      "p95_gap": 0.0011176954565634315
+    },
+    {
+      "shots": 150,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.025,
+      "median_gap": 0.0004889488977029857,
+      "p95_gap": 0.0010016205886302935
+    },
+    {
+      "shots": 200,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0175,
+      "median_gap": 0.0004598329696819455,
+      "p95_gap": 0.0010016205886302935
+    },
+    {
+      "shots": 250,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.015,
+      "median_gap": 0.0003719338247104814,
+      "p95_gap": 0.0010016205886302935
+    },
+    {
+      "shots": 300,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0325,
+      "median_gap": 0.0003719338247104814,
+      "p95_gap": 0.0010016205886302935
+    },
+    {
+      "shots": 400,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.025,
+      "median_gap": 0.0004598329696819455,
+      "p95_gap": 0.0010026784247125135
+    },
+    {
+      "shots": 500,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0075,
+      "median_gap": 0.0005028698195524422,
+      "p95_gap": 0.0009868595508381733
+    }
+  ],
+  "noisy_line_losses": [
+    {
+      "shots": 25,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0,
+      "median_gap": 0.0010803244434270858,
+      "p95_gap": 0.002028258616359723
+    },
+    {
+      "shots": 50,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0,
+      "median_gap": 0.0006954780239592235,
+      "p95_gap": 0.0015932129073061845
+    },
+    {
+      "shots": 75,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0,
+      "median_gap": 0.0006449510944766644,
+      "p95_gap": 0.0015814371009395685
+    },
+    {
+      "shots": 100,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0,
+      "median_gap": 0.0006110030219142892,
+      "p95_gap": 0.0015216034228309465
+    },
+    {
+      "shots": 150,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0,
+      "median_gap": 0.0006110030219142892,
+      "p95_gap": 0.0016042049144259028
+    },
+    {
+      "shots": 200,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0,
+      "median_gap": 0.000551530492015541,
+      "p95_gap": 0.0015132006136679486
+    },
+    {
+      "shots": 250,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0,
+      "median_gap": 0.000551530492015541,
+      "p95_gap": 0.001474246530663383
+    },
+    {
+      "shots": 300,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0,
+      "median_gap": 0.0005194432135102813,
+      "p95_gap": 0.0014741244177471126
+    },
+    {
+      "shots": 400,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0,
+      "median_gap": 0.0004698178965236319,
+      "p95_gap": 0.0014717782255356247
+    },
+    {
+      "shots": 500,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0,
+      "median_gap": 0.0004698178965236319,
+      "p95_gap": 0.001460301231612453
+    }
+  ],
+  "true_optimum": 207484.7524714511,
+  "n_trials": 400,
+  "n_placements_evaluated": 760
+}
