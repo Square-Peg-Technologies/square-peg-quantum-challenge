@@ -1,6 +1,8 @@
 # Quantum Storage Siting
 
-Square Peg Technologies — PQIC Challenge
+Team: Square Peg Technologies
+
+Project: Quantum Storage Siting — PQIC Challenge
 
 Challenge Track: Storage siting and sizing for resilience and AI load integration
 
@@ -153,8 +155,11 @@ Example output (Quantum Siting, ieee14, T=24h, `4batt_dcbus4.py`):
     Aer: using CPU statevector
 
     Quantum Siting Results (Qiskit VQA + UC refinement)
+    Warm-start:                 θ=0 (paper sim default)
+    Qubits / params:            19 / 114
+    Shots — COBYLA / final:     512 / 5000
     Quantum candidates found:   10
-    Candidates evaluated:       10
+    Candidates evaluated:       10  (of 1001 total placements)
     Runtime — quantum sieve:    145.6s
     Runtime — classical stage:  10.1s
 
