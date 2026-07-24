@@ -418,35 +418,40 @@ contains were re-evaluated with losses on in parallel, and the same
 bootstrap methodology (400 trials/shot level, 25 through 500 shots) was
 re-run against this loss-aware cache:
 
-![Optimality gap vs. shots, with line losses](stop_conditions_figures/sweep_optimality_gap_vs_shots_line_losses.png)
+![Optimality gap and success rate vs. shots, with line losses](stop_conditions_figures/sweep_optimality_gap_vs_shots_line_losses.png)
 
-| Shots | Feasibility rate | Median gap | P95 gap |
-|---:|---:|---:|---:|
-| 25  | 100.0% | 0.0786% | 0.1734% |
-| 50  | 100.0% | 0.0402% | 0.1299% |
-| 75  | 100.0% | 0.0351% | 0.1287% |
-| 100 | 100.0% | 0.0317% | 0.1227% |
-| 150 | 100.0% | 0.0317% | 0.1310% |
-| 200 | 100.0% | 0.0258% | 0.1219% |
-| 250 | 100.0% | 0.0258% | 0.1180% |
-| 300 | 100.0% | 0.0226% | 0.1180% |
-| 400 | 100.0% | 0.0176% | 0.1178% |
-| 500 | 100.0% | 0.0176% | 0.1166% |
+| Shots | Feasibility rate | Success rate | Median gap | P95 gap |
+|---:|---:|---:|---:|---:|
+| 25  | 100.0% | 1.0% | 0.0786% | 0.1734% |
+| 50  | 100.0% | 4.8% | 0.0402% | 0.1299% |
+| 75  | 100.0% | 4.2% | 0.0351% | 0.1287% |
+| 100 | 100.0% | 4.5% | 0.0317% | 0.1227% |
+| 150 | 100.0% | 3.5% | 0.0317% | 0.1310% |
+| 200 | 100.0% | 4.5% | 0.0258% | 0.1219% |
+| 250 | 100.0% | 4.8% | 0.0258% | 0.1180% |
+| 300 | 100.0% | 8.5% | 0.0226% | 0.1180% |
+| 400 | 100.0% | 8.8% | 0.0176% | 0.1178% |
+| 500 | 100.0% | 7.5% | 0.0176% | 0.1166% |
 
-**This is the real, non-flat result.** Feasibility is still ~100% at every
+**Three metrics, three different pictures.** Feasibility is ~100% at every
 shot level (the ~25% per-shot weight-4 hit rate found earlier is already
 enough to make finding *a* feasible candidate a near-certainty by 25 shots —
 feasibility was never really the bottleneck once training converged
-properly). But the *quality* of that feasible candidate keeps improving as
-shots increase: median optimality gap drops from 0.079% at 25 shots to
-0.018% at 500 shots, roughly a 4-5x tightening, with clear diminishing
-returns setting in past ~200-300 shots rather than a sharp single
-breakpoint. The reference cost here (207,545.72) is the best found among the
-496 sampled placements, not a separately-proven loss-aware global optimum
-(unlike the 193,229 lossless reference from `siting_mip.py`) — `siting_mip.py`
-does not currently support a loss-aware objective, so this is a strong
-lower-bound estimate rather than a proven one, though it comes from nearly
-half of the full 1001-placement search space.
+properly). Success rate — the strict, all-or-nothing probability that a
+trial's best candidate is an *exact* match to the best-found placement,
+rather than merely close to it — is a much noisier, slower-moving signal:
+it climbs from ~1% at 25 shots to roughly 5-9% by 300+ shots, with visible
+trial-to-trial jitter (e.g. the 400→500-shot dip from 8.8% to 7.5% is
+bootstrap sampling noise at only 400 trials/point, not a real reversal).
+Optimality gap sits in between the other two: median gap drops smoothly from
+0.079% at 25 shots to 0.018% at 500 shots, roughly a 4-5x tightening, with
+clear diminishing returns setting in past ~200-300 shots rather than a sharp
+single breakpoint. The reference cost here (207,545.72) is the best found
+among the 496 sampled placements, not a separately-proven loss-aware global
+optimum (unlike the 193,229 lossless reference from `siting_mip.py`) —
+`siting_mip.py` does not currently support a loss-aware objective, so this is
+a strong lower-bound estimate rather than a proven one, though it comes from
+nearly half of the full 1001-placement search space.
 
 **Bottom line for QPU shot budgeting:** at 500 shots (one real Forte-1 run),
 expect a feasible placement essentially every time, within roughly 0.02%
@@ -455,3 +460,36 @@ acceptable gap for this problem. Going lower (e.g. 100-200 shots) costs
 little in practice (~0.03% median gap) if shot budget were tighter, but 500
 shots is a reasonable, comfortable choice given the two-run budget, without
 needing to push toward the higher end of what was tested.
+
+### Circuit resource cost (depth, gate count)
+
+Shots is a per-execution sampling dial; circuit depth and gate count are a
+fixed structural property of the trained ansatz (butterfly, 3 layers, this
+problem's 19-qubit register) — they don't vary with shot count, so this is a
+resource table, not another shots-sweep. Measured on the actual trained
+circuit (local noiseless retrain — no qBraid job, no line-losses solve;
+`run_vqa_qiskit` never touches `evaluate_candidates`, so line_losses plays no
+role here):
+
+| Metric | Abstract (Qiskit-native gates) | Transpiled (rz/ry/rx/rxx basis, opt_level=1) |
+|---|---:|---:|
+| Circuit depth | 70 | 189 |
+| Total gates | 249 | 774 |
+| Two-qubit (entangling) gates | 192 (`rzx`) | 192 (`rxx`) |
+
+n_qubits = 19 (5 generator-commitment qubits + 14 bus/battery-site qubits),
+n_params = 114 (3 layers x 38 params/layer: butterfly's per-layer gamma/beta
+split). The two-qubit gate count (192) is identical in both bases — it's a
+structural count of one entangling gate per adjacent qubit pair per layer,
+and no basis re-expression adds or removes entangling operations, only
+decomposes each one into more single-qubit rotations (which is why depth
+roughly triples, 70 -> 189, while the two-qubit count stays fixed). The
+transpiled numbers are an estimate on a generic 2-qubit-native basis, not the
+literal circuit qBraid submits — the real device-specific transpilation
+happens server-side and wasn't reproduced exactly here.
+
+**Why this matters for noise:** 192 entangling gates is 192 separate error
+opportunities under the forte-1 noise model — this is the mechanistic reason
+noise visibly degrades results at all (see the noiseless-vs-noisy Hamming
+weight and gap sections above), rather than that degradation being an
+unexplained black box.

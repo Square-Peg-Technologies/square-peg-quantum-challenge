@@ -1,0 +1,87 @@
+{
+  "noisy_line_losses": [
+    {
+      "shots": 25,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.01,
+      "median_gap": 0.0007862662327990484,
+      "p95_gap": 0.0017339219587181147,
+      "n_feasible_trials": 400
+    },
+    {
+      "shots": 50,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0475,
+      "median_gap": 0.0004015328584552507,
+      "p95_gap": 0.001299004040371897,
+      "n_feasible_trials": 400
+    },
+    {
+      "shots": 75,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0425,
+      "median_gap": 0.0003510207707971781,
+      "p95_gap": 0.0012872316930409493,
+      "n_feasible_trials": 400
+    },
+    {
+      "shots": 100,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.045,
+      "median_gap": 0.00031708267017134805,
+      "p95_gap": 0.0012274155905293003,
+      "n_feasible_trials": 400
+    },
+    {
+      "shots": 150,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.035,
+      "median_gap": 0.00031708267017134805,
+      "p95_gap": 0.0013099928186898243,
+      "n_feasible_trials": 400
+    },
+    {
+      "shots": 200,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.045,
+      "median_gap": 0.0002576276097855814,
+      "p95_gap": 0.0012190152496148199,
+      "n_feasible_trials": 400
+    },
+    {
+      "shots": 250,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0475,
+      "median_gap": 0.0002576276097855814,
+      "p95_gap": 0.0011800726090166879,
+      "n_feasible_trials": 400
+    },
+    {
+      "shots": 300,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.085,
+      "median_gap": 0.00022554975662559203,
+      "p95_gap": 0.0011799505319699723,
+      "n_feasible_trials": 400
+    },
+    {
+      "shots": 400,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.0875,
+      "median_gap": 0.00017593901662298544,
+      "p95_gap": 0.001177605028931038,
+      "n_feasible_trials": 400
+    },
+    {
+      "shots": 500,
+      "feasibility_rate": 1.0,
+      "success_rate": 0.075,
+      "median_gap": 0.00017593901662298544,
+      "p95_gap": 0.0011661314062701058,
+      "n_feasible_trials": 400
+    }
+  ],
+  "true_optimum": 207545.71713204143,
+  "n_trials": 400,
+  "n_placements_evaluated": 496
+}
