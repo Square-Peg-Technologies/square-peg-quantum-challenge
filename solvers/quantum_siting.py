@@ -630,13 +630,21 @@ def run_vqa_qiskit(
 def _eval_one(args: tuple):
     """Top-level worker for parallel candidate evaluation (must be picklable)."""
     import copy
-    if len(args) == 8:
+    if len(args) == 9:
+        (bat_locs, commitment, grid, generators, batteries, T, second_stage,
+         line_losses, outages) = args
+    elif len(args) == 8:
         bat_locs, commitment, grid, generators, batteries, T, second_stage, line_losses = args
+        outages = None
     else:
         bat_locs, commitment, grid, generators, batteries, T, second_stage = args
         line_losses = False
+        outages = None
     try:
         if second_stage == "ed":
+            # ED has no outages parameter — it dispatches a fixed commitment
+            # rather than solving one, and that commitment already comes from
+            # the candidate's own u_bits, not an hour-indexed outages dict.
             from solvers.ed import run_ed
             gens_modified = copy.deepcopy(generators)
             for g, on in enumerate(commitment):
@@ -649,7 +657,7 @@ def _eval_one(args: tuple):
         else:
             from solvers.uc import run_uc
             result_obj = run_uc(grid, generators, batteries, bat_locs, T,
-                                line_losses=line_losses)
+                                outages=outages, line_losses=line_losses)
         return (bat_locs, commitment, result_obj.total_cost, result_obj)
     except Exception:
         return None
@@ -662,6 +670,7 @@ def reevaluate_with_losses(
     batteries: list[dict],
     T: int,
     second_stage: str,
+    outages: dict[int, set[int]] | None = None,
 ) -> list[tuple]:
     """Re-solve every already-evaluated candidate with line_losses=True.
 
@@ -671,11 +680,15 @@ def reevaluate_with_losses(
     new search, no new candidates). Returns the same
     [(bat_locs, commitment, true_cost, result_obj), ...] shape as
     evaluate_candidates, with loss-aware costs/results.
+
+    outages: same {gen_index: set of 0-indexed hours} format as run_uc's
+        outages parameter — passed straight through (ED second_stage ignores
+        it, same as evaluate_candidates/_eval_one).
     """
     reevaluated = []
     for bat_locs, commitment, _lossless_cost, _result in evaluated:
         outcome = _eval_one((bat_locs, commitment, grid, generators, batteries, T,
-                            second_stage, True))
+                            second_stage, True, outages))
         if outcome is not None:
             reevaluated.append(outcome)
     return reevaluated
@@ -689,6 +702,7 @@ def evaluate_candidates(
     T: int,
     second_stage: str,
     line_losses: bool = False,
+    outages: dict[int, set[int]] | None = None,
 ) -> list[tuple]:
     """Evaluate each (u_bits, s_bits, proxy_cost) candidate via ED or UC.
 
@@ -699,6 +713,11 @@ def evaluate_candidates(
         (_GridData carries R/Sbase so this still runs through the parallel
         worker pool, unlike reevaluate_with_losses which runs sequentially
         against the live Case object).
+    outages: optional dict {gen_index: set of 0-indexed hours} forcing that
+        generator off during those hours — passed straight through to every
+        UC subproblem solve (second_stage="uc" only; ED ignores it, since ED
+        dispatches a fixed commitment from the candidate's own u_bits rather
+        than solving one). Same format as run_uc's outages parameter.
 
     Workers use the "spawn" start method rather than "fork" for a clean
     process start (each worker re-imports what it needs instead of
@@ -738,7 +757,7 @@ def evaluate_candidates(
             if bat_locs_key in seen_bat_locs:
                 continue
             seen_bat_locs.add(bat_locs_key)
-        work_items.append((bat_locs, commitment, grid_data, generators, batteries, T, second_stage, line_losses))
+        work_items.append((bat_locs, commitment, grid_data, generators, batteries, T, second_stage, line_losses, outages))
 
     results = []
     if not work_items:
@@ -778,6 +797,7 @@ def run_quantum_siting(
     ansatz: str = "auto",
     final_shots: int | None = None,
     line_losses: bool = False,
+    outages: dict[int, set[int]] | None = None,
 ):
     """Full hybrid quantum-classical siting pipeline.
 
@@ -811,6 +831,12 @@ def run_quantum_siting(
                        evaluated set (not just the single lossless best)
                        guards against losses reshuffling which candidate is
                        actually cheapest, not just its reported cost.
+    outages          : optional dict {gen_index: set of 0-indexed hours}
+                       forcing that generator off during those hours, passed
+                       through to every UC subproblem solve during classical
+                       refinement (second_stage="uc" only; ED ignores it, see
+                       evaluate_candidates). Same format as run_uc's outages
+                       parameter. Defaults to no outages.
 
     final_backend="ionq_qbraid": COBYLA trains locally regardless of sim_method
     (submitting each of the ~150+ training iterations to qBraid would be far
@@ -914,6 +940,7 @@ def run_quantum_siting(
         batteries=batteries,
         T=T,
         second_stage=second_stage,
+        outages=outages,
     )
 
     runtime_classical = time.perf_counter() - t_c_start
@@ -927,6 +954,7 @@ def run_quantum_siting(
         t_loss_start = time.perf_counter()
         evaluated = reevaluate_with_losses(
             evaluated, grid, generators, batteries, T, second_stage,
+            outages=outages,
         )
         runtime_phases[f"Loss-aware re-solve ({len(evaluated)} candidates)"] = (
             time.perf_counter() - t_loss_start

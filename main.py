@@ -578,7 +578,8 @@ def main():
     elif opt == 3:
         tl = input("Time limit in seconds (default 120): ").strip()
         time_limit_s = float(tl) if tl else 120.0
-        result = run_siting_benders(grid, generators, batteries, T, time_limit_s=time_limit_s)
+        result = run_siting_benders(grid, generators, batteries, T, time_limit_s=time_limit_s,
+                                    outages=outages)
     else:
         sim_method, final_backend, n_candidates, second_stage, warm_start = quantum_opts
         from solvers.quantum_siting import _AER_AVAILABLE, _AER_TN_AVAILABLE
@@ -610,6 +611,7 @@ def main():
             second_stage=second_stage,
             warm_start=warm_start,
             track_convergence=True,
+            outages=outages,
         )
     elapsed = time.perf_counter() - t_start
 

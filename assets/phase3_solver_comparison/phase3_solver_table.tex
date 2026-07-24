@@ -1,0 +1,49 @@
+% Standalone file -- \input{phase3_solver_table} in the Phase 3 report.
+% Requires: booktabs, float (already loaded in the Phase 2 main doc)
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{llllll}
+\toprule
+\textbf{Scenario} & \textbf{Method} & \textbf{Siting Buses} & \textbf{24h Cost (\$)} & \textbf{Runtime} & \textbf{Gap vs.\ Classical} \\
+\midrule
+\multirow{3}{*}{No DC}
+  & Classical siting (Benders/SCIP) & (1, 2, 3, 8)   & 97,229  & 16.3s  & (reference) \\
+  & Quantum VQA --- Aer statevector ($n=20$) & (8, 11, 13, 14) & 97,229  & 102.4s & 0.000\% \\
+  & QPU (IonQ Forte-1)               & ---            & ---     & ---    & --- \\
+\addlinespace
+\multirow{3}{*}{DC @ bus 4}
+  & Classical siting (Benders/SCIP) & (3, 8, 11, 12) & 193,229 & 18.1s  & (reference) \\
+  & Quantum VQA --- Aer statevector ($n=20$) & (4, 10, 11, 12) & 193,229 & 139.4s & 0.000\% \\
+  & QPU (IonQ Forte-1)               & ---            & ---     & ---    & --- \\
+\addlinespace
+\multirow{3}{*}{DC @ 4, Gen2 outage}
+  & Classical siting (Benders/SCIP) & (1, 2, 6, 7)   & 227,343 & 18.0s  & (reference) \\
+  & Quantum VQA --- Aer statevector ($n=20$) & (4, 6, 9, 12) & 227,343 & 83.8s  & 0.000\% \\
+  & QPU (IonQ Forte-1)               & ---            & ---     & ---    & --- \\
+\addlinespace
+\multirow{3}{*}{DC @ 4, heatwave}
+  & Classical siting (Benders/SCIP) & (7, 9, 11, 12) & 203,675 & 34.6s  & (reference) \\
+  & Quantum VQA --- Aer statevector ($n=20$) & (4, 9, 10, 14) & 203,404 & 76.8s  & $-$0.133\%\textsuperscript{\dag} \\
+  & QPU (IonQ Forte-1)               & ---            & ---     & ---    & --- \\
+\bottomrule
+\end{tabular}
+\caption{Cost and runtime comparison across four IEEE14 scenarios. Classical
+siting uses Benders decomposition with SCIP subproblems (batch-Benders,
+2-min time limit, early-stall detection). Quantum VQA uses a 19-qubit
+butterfly ansatz (COBYLA, Aer CPU statevector simulator), evaluating the top
+$n=20$ candidates from the quantum sieve classically (UC second stage). Gap
+vs.\ Classical is the percentage cost difference relative to the classical
+result; 0.000\% means the two methods matched to the nearest cent at this
+problem size. QPU rows are placeholders (real Forte-1 hardware runs not yet
+executed for this comparison --- budget-limited to a small number of real
+QPU submissions). Gen2 outage (full 24h horizon) and the heatwave demand
+scaling are independent scenarios, not combined. \textsuperscript{\dag}Negative
+gap: the classical Benders search stopped early via its stall-detection
+heuristic (no cost improvement for several iterations) before reaching the
+placement the quantum sieve's candidate list happened to include, so quantum
+found a slightly cheaper feasible placement than the classical run's
+reported best for this scenario --- not a discrepancy in either solver's
+dispatch model.}
+\end{table}

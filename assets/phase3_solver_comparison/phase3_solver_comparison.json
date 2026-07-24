@@ -1,0 +1,90 @@
+[
+  {
+    "label": "No DC",
+    "assets_file": "4batt.py",
+    "classical_buses": [
+      1,
+      2,
+      3,
+      8
+    ],
+    "classical_cost": 97228.99999920001,
+    "classical_runtime_s": 16.25121723099801,
+    "classical_status": "stalled",
+    "quantum_buses": [
+      8,
+      11,
+      13,
+      14
+    ],
+    "quantum_cost": 97228.99999920004,
+    "quantum_runtime_s": 102.40244985000027,
+    "gap_pct": 2.9933281692677254e-14
+  },
+  {
+    "label": "DC @ bus 4",
+    "assets_file": "4batt_dcbus4.py",
+    "classical_buses": [
+      3,
+      8,
+      11,
+      12
+    ],
+    "classical_cost": 193228.99999999997,
+    "classical_runtime_s": 18.093096348999097,
+    "classical_status": "stalled",
+    "quantum_buses": [
+      4,
+      10,
+      11,
+      12
+    ],
+    "quantum_cost": 193228.9999992,
+    "quantum_runtime_s": 139.37018457700106,
+    "gap_pct": -4.140046203024595e-10
+  },
+  {
+    "label": "DC @ 4, Gen2 outage",
+    "assets_file": "4batt_dcbus4_g2out.py",
+    "classical_buses": [
+      1,
+      2,
+      6,
+      7
+    ],
+    "classical_cost": 227343.3995876442,
+    "classical_runtime_s": 17.9844534799995,
+    "classical_status": "stalled",
+    "quantum_buses": [
+      4,
+      6,
+      9,
+      12
+    ],
+    "quantum_cost": 227343.39958798722,
+    "quantum_runtime_s": 83.84055340800114,
+    "gap_pct": 1.508808904877949e-10
+  },
+  {
+    "label": "DC @ 4, heatwave",
+    "assets_file": "4batt_dcbus4_heatwave.py",
+    "classical_buses": [
+      7,
+      9,
+      11,
+      12
+    ],
+    "classical_cost": 203674.6421869245,
+    "classical_runtime_s": 34.59176850000222,
+    "classical_status": "stalled",
+    "quantum_buses": [
+      4,
+      9,
+      10,
+      14
+    ],
+    "quantum_cost": 203403.74338270375,
+    "quantum_runtime_s": 76.79592216799938,
+    "gap_pct": -0.13300566104450506
+  }
+]

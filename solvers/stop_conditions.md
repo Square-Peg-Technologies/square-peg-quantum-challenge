@@ -517,3 +517,34 @@ opportunities under the forte-1 noise model — this is the mechanistic reason
 noise visibly degrades results at all (see the noiseless-vs-noisy Hamming
 weight and gap sections above), rather than that degradation being an
 unexplained black box.
+
+### Phase 3 solver comparison: classical vs. quantum across four scenarios
+
+Cost/runtime/gap comparison across four IEEE14 scenarios (No DC, DC @ bus 4,
+DC @ 4 + Gen2 outage, DC @ 4 + heatwave — Gen2 outage and heatwave are
+separate, independent scenarios, not combined), classical siting
+(Benders/SCIP) vs. quantum siting (VQA, local Aer statevector simulator,
+$n=20$ candidates), with placeholder rows for real QPU (Forte-1) runs not
+yet executed for this comparison. Source data, the reproducing script, and
+the LaTeX table source all live in `assets/phase3_solver_comparison/` (see
+that directory's `README.md` for regeneration instructions).
+
+![Phase 3 solver comparison table](../assets/phase3_solver_comparison/phase3_solver_comparison.png)
+
+Gen2 outage previously had no effect on either siting solver's dispatch
+(`OUTAGES` was read only by the standalone Unit Commitment solve) — fixed by
+threading an `outages` parameter through `run_siting_benders`/
+`run_quantum_siting` and their internal `run_uc()` calls
+(`solvers/siting_benders.py`, `solvers/quantum_siting.py`, wired up in
+`dashboard.py`/`main.py`). The Gen2-outage scenario now genuinely costs more
+than plain DC@4 ($227,343 vs. $193,229), with classical and quantum agreeing
+exactly (0.000% gap).
+
+One caveat remains, explained in the table footnote and in
+`assets/phase3_solver_comparison/README.md`:
+
+- The heatwave scenario's negative gap (classical $203,675 vs. quantum
+  $203,404, gap $-0.133\%$) reflects the classical Benders search stopping
+  early via its stall-detection heuristic (`scip_status="stalled"`), not a
+  discrepancy in either solver's dispatch model — quantum's candidate list
+  happened to include a placement the classical run's early stop missed.

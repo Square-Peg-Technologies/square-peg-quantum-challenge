@@ -158,11 +158,12 @@ def _history_table() -> pd.DataFrame:
             "Assets": r.get("assets_file", ""),
             "T": r.get("T", ""),
             "Backend": r.get("backend", ""),
+            "Runtime (s)": f"{r['runtime_s']:.1f}" if r.get("runtime_s") is not None else "",
             "Result": r.get("summary", ""),
         }
         for r in _load_history()
     ]
-    cols = ["When", "Problem", "Use case", "Assets", "T", "Backend", "Result"]
+    cols = ["When", "Problem", "Use case", "Assets", "T", "Backend", "Runtime (s)", "Result"]
     return pd.DataFrame(rows, columns=cols)
 
 
@@ -292,13 +293,21 @@ def _save_run_log(problem: str, text: str) -> str:
 
 def _execute(problem: str, opt_name: str, use_case: str, assets_file: str, T: int,
              solve_fn):
-    """Run solve_fn under captured stdout; return (result, terminal_text, plots, log_path).
+    """Run solve_fn under captured stdout; return (result, terminal_text, plots, log_path, elapsed).
 
     solve_fn(grid, assets_mod, loc_mod, dc_bus, dc_mw) -> result object.
-    On failure result is None and the traceback is in terminal_text.
+    On failure result is None and the traceback is in terminal_text; elapsed is
+    None if solve_fn never started/finished (e.g. _load_case itself raised).
+
+    elapsed is wall-clock solver time in seconds — computed here already (it
+    was previously printed to the terminal log and then discarded instead of
+    being persisted anywhere), now returned so callers can pass it into
+    _finish_run and have it land in outputs/dashboard_history.json instead of
+    being lost once the run completes.
     """
     buf = io.StringIO()
     result = None
+    elapsed = None
     try:
         with contextlib.redirect_stdout(buf):
             grid, assets_mod, loc_mod, dc_bus, dc_mw = _load_case(use_case, assets_file)
@@ -317,7 +326,7 @@ def _execute(problem: str, opt_name: str, use_case: str, assets_file: str, T: in
     text = buf.getvalue()
     log_path = _save_run_log(problem, text)
     text += f"\n[run log saved: {log_path}]"
-    return result, text, _plots_from_log(text), log_path
+    return result, text, _plots_from_log(text), log_path, elapsed
 
 
 def _snapshot_plots(paths: list[str], snap_dir: str) -> list[str]:
@@ -338,11 +347,18 @@ def _snapshot_plots(paths: list[str], snap_dir: str) -> list[str]:
 
 def _finish_run(problem: str, use_case: str, assets_file: str, T: int,
                 summary_plain: str, log_path: str, plots: list[str],
-                key: dict | None = None, extra: dict | None = None) -> pd.DataFrame:
+                key: dict | None = None, extra: dict | None = None,
+                runtime_s: float | None = None) -> pd.DataFrame:
     """Record the run in history and return the refreshed history table.
 
     key: the exact input settings — used to auto-load cached results when the
     dashboard reopens or inputs match a previous run.
+
+    runtime_s: wall-clock solver time from _execute()'s `elapsed` return value
+    (None if the run failed before a runtime could be measured). Persisted so
+    later analysis (e.g. cross-scenario solver comparison tables) can read
+    runtimes straight out of outputs/dashboard_history.json instead of having
+    to re-run everything from scratch to recover timing data.
 
     Plot filenames only encode T + assets file, so different input combinations
     overwrite each other in outputs/. Snapshot this run's plots into a per-run
@@ -360,6 +376,7 @@ def _finish_run(problem: str, use_case: str, assets_file: str, T: int,
         "use_case": use_case,
         "assets_file": assets_file,
         "T": T,
+        "runtime_s": runtime_s,
         "summary": summary_plain,
         "log": log_path,
         "plots": plots,
@@ -488,7 +505,7 @@ def run_ed_tab(use_case: str, assets_file: str, T: float, force: bool = False,
                           assets_mod.GENERATORS, assets_mod.BATTERIES, grid)
         return result
 
-    result, text, plots, log_path = _execute("ed", "ED", use_case, assets_file, T, solve)
+    result, text, plots, log_path, elapsed = _execute("ed", "ED", use_case, assets_file, T, solve)
     if result is None:
         gr.Warning("ED run failed — open the Terminal sub-tab for the traceback.")
         summary, plain = "### Run failed — see Terminal sub-tab", "FAILED"
@@ -498,7 +515,8 @@ def run_ed_tab(use_case: str, assets_file: str, T: float, force: bool = False,
         if line_losses and result.total_losses_mw:
             summary += f" (losses: {sum(result.total_losses_mw):,.1f} MWh)"
     history = _finish_run("ED", use_case, assets_file, T, plain, log_path, plots,
-                          key=_ed_key(use_case, assets_file, T, line_losses))
+                          key=_ed_key(use_case, assets_file, T, line_losses),
+                          runtime_s=elapsed)
     return summary, text, plots, history
 
 
@@ -526,7 +544,7 @@ def run_uc_tab(use_case: str, assets_file: str, T: float, force: bool = False,
                           assets_mod.GENERATORS, assets_mod.BATTERIES, grid)
         return result
 
-    result, text, plots, log_path = _execute("uc", "UC", use_case, assets_file, T, solve)
+    result, text, plots, log_path, elapsed = _execute("uc", "UC", use_case, assets_file, T, solve)
     if result is None:
         gr.Warning("UC run failed — open the Terminal sub-tab for the traceback.")
         summary, plain = "### Run failed — see Terminal sub-tab", "FAILED"
@@ -536,7 +554,8 @@ def run_uc_tab(use_case: str, assets_file: str, T: float, force: bool = False,
         if line_losses and result.total_losses_mw:
             summary += f" (losses: {sum(result.total_losses_mw):,.1f} MWh)"
     history = _finish_run("UC", use_case, assets_file, T, plain, log_path, plots,
-                          key=_ed_key(use_case, assets_file, T, line_losses))
+                          key=_ed_key(use_case, assets_file, T, line_losses),
+                          runtime_s=elapsed)
     return summary, text, plots, history
 
 
@@ -559,9 +578,11 @@ def run_siting_tab(use_case: str, assets_file: str, T: float, time_limit: float,
 
     def solve(grid, assets_mod, loc_mod, dc_bus, dc_mw):
         from solvers.siting_benders import run_siting_benders
+        outages = getattr(assets_mod, "OUTAGES", None)
         result = run_siting_benders(grid, assets_mod.GENERATORS, assets_mod.BATTERIES,
                                     T, time_limit_s=float(time_limit),
-                                    line_losses=line_losses, loss_top_k=loss_top_k)
+                                    line_losses=line_losses, loss_top_k=loss_top_k,
+                                    outages=outages)
         if result.runtime_phases:
             from plots import save_runtime_breakdown
             save_runtime_breakdown(result.runtime_phases, "Siting", T, assets_file)
@@ -575,7 +596,7 @@ def run_siting_tab(use_case: str, assets_file: str, T: float, time_limit: float,
                           assets_mod.GENERATORS, assets_mod.BATTERIES, grid)
         return result
 
-    result, text, plots, log_path = _execute("siting", "Siting", use_case,
+    result, text, plots, log_path, elapsed = _execute("siting", "Siting", use_case,
                                              assets_file, T, solve)
     table = pd.DataFrame()
     extra = None
@@ -601,7 +622,7 @@ def run_siting_tab(use_case: str, assets_file: str, T: float, time_limit: float,
     history = _finish_run("Siting", use_case, assets_file, T, plain, log_path, plots,
                           key=_siting_key(use_case, assets_file, T, time_limit,
                                           line_losses, loss_top_k),
-                          extra=extra)
+                          extra=extra, runtime_s=elapsed)
     return summary, text, plots, table, history
 
 
@@ -742,11 +763,13 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
             cost_tag = "free simulator" if DEVICE_ID == FREE_SIMULATOR_ID else "spends qBraid credits"
             print(f"IonQ (qBraid29sim): training locally above, final shots on device "
                   f"{DEVICE_ID!r}{noise_tag} (real job, {cost_tag})")
+        outages = getattr(assets_mod, "OUTAGES", None)
         result = run_quantum_siting(
             grid=grid, generators=assets_mod.GENERATORS, batteries=assets_mod.BATTERIES,
             T=T, sim_method=sim_method, final_backend=final_backend, n_candidates=n_candidates,
             second_stage=second_stage, warm_start=warm_start, track_convergence=True,
             max_time_s=float(max_time_s), ansatz=ansatz, line_losses=line_losses,
+            outages=outages,
         )
         from plots import save_runtime_breakdown
         state["runtime_chart"] = save_runtime_breakdown(
@@ -766,7 +789,7 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
         state["generators"] = assets_mod.GENERATORS
         return result
 
-    result, text, plots, log_path = _execute("quantum", "Quantum Siting", use_case,
+    result, text, plots, log_path, elapsed = _execute("quantum", "Quantum Siting", use_case,
                                              assets_file, T, solve)
 
     q_key = _quantum_key(use_case, assets_file, T, backend_label, sampling_label,
@@ -776,7 +799,7 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
         gr.Warning("Quantum run failed — open the Terminal sub-tab for the traceback.")
         history = _finish_run("Quantum", use_case, assets_file, T, "FAILED",
                               log_path, plots, key=q_key,
-                              extra={"backend": backend_tag})
+                              extra={"backend": backend_tag}, runtime_s=elapsed)
         return ("### Run failed — see Terminal sub-tab", text, plots,
                 pd.DataFrame(), [], None, history)
 
@@ -811,6 +834,7 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
         extra={"table_rows": table.to_dict("records"),
                "runtime_chart": state.get("runtime_chart"),
                "backend": backend_tag},
+        runtime_s=elapsed,
     )
     return summary, text, plots, table, pf_gallery, state.get("runtime_chart"), history
 

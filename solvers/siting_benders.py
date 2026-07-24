@@ -62,10 +62,10 @@ def _batteries_identical(b1: dict, b2: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def _uc_worker(args: tuple):
-    bat_locs, grid, generators, batteries, T = args
+    bat_locs, grid, generators, batteries, T, outages = args
     try:
         from solvers.uc import run_uc
-        result = run_uc(grid, generators, batteries, bat_locs, T)
+        result = run_uc(grid, generators, batteries, bat_locs, T, outages=outages)
         return bat_locs, result.total_cost, result
     except Exception:
         return bat_locs, float("inf"), None
@@ -129,6 +129,7 @@ def run_siting_benders(
     stall_rel_tol: float = 1e-4,
     line_losses: bool = False,
     loss_top_k: int = 10,
+    outages: dict[int, set[int]] | None = None,
 ) -> SitingMIPResult:
     """Battery siting via batch Benders decomposition.
 
@@ -159,6 +160,11 @@ def run_siting_benders(
                     just its reported cost.
     loss_top_k    : how many distinct lossless placements to re-solve with
                     losses when line_losses=True. Ignored otherwise.
+    outages       : optional dict {gen_index: set of 0-indexed hours} forcing
+                    that generator off during those hours, passed straight
+                    through to every UC subproblem solve (both the Benders
+                    search itself and the loss-aware re-solve). Same format
+                    as run_uc's outages parameter. Defaults to no outages.
     """
     n_bat    = len(batteries)
     orig_grid = grid                    # keep the real Case object for the
@@ -242,7 +248,7 @@ def run_siting_benders(
 
         # ── Step 2: evaluate all placements in parallel ───────────────────────
         args = [
-            (bl, grid, generators, batteries, T)
+            (bl, grid, generators, batteries, T, outages)
             for bl in batch_placements
         ]
         _t0 = time.perf_counter()
@@ -319,7 +325,8 @@ def run_siting_benders(
         loss_best_result = None
         loss_best_locs = None
         for bat_locs, _lossless_cost, _ in top_lossless:
-            r = run_uc(orig_grid, generators, batteries, bat_locs, T, line_losses=True)
+            r = run_uc(orig_grid, generators, batteries, bat_locs, T, outages=outages,
+                      line_losses=True)
             if r.total_cost < loss_best_cost:
                 loss_best_cost = r.total_cost
                 loss_best_result = r
