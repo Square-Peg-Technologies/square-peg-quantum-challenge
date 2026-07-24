@@ -1,0 +1,12 @@
+{
+  "true_optimum": 207473.99320028158,
+  "best_placement": [
+    3,
+    4,
+    8,
+    14
+  ],
+  "n_placements_total": 1001,
+  "n_placements_evaluated": 1001,
+  "elapsed_seconds": 1315.0955377269966
+}

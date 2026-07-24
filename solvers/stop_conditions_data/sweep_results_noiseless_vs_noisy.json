@@ -4,71 +4,71 @@
       "shots": 25,
       "feasibility_rate": 1.0,
       "success_rate": 0.0,
-      "median_gap": 0.0009968151954136064,
-      "p95_gap": 0.00205125981359023
+      "median_gap": 0.0010369051736202164,
+      "p95_gap": 0.0022857902952673433
     },
     {
       "shots": 50,
       "feasibility_rate": 1.0,
-      "success_rate": 0.005,
-      "median_gap": 0.0005266238667352363,
-      "p95_gap": 0.0011292548341261992
+      "success_rate": 0.0,
+      "median_gap": 0.0007671300652806339,
+      "p95_gap": 0.0017459087240215636
     },
     {
       "shots": 75,
       "feasibility_rate": 1.0,
-      "success_rate": 0.005,
-      "median_gap": 0.0006003534598996317,
-      "p95_gap": 0.0011708996603894254
+      "success_rate": 0.0,
+      "median_gap": 0.0004918808169292613,
+      "p95_gap": 0.001678560556860606
     },
     {
       "shots": 100,
       "feasibility_rate": 1.0,
-      "success_rate": 0.0075,
-      "median_gap": 0.0005028698195524422,
-      "p95_gap": 0.0011176954565634315
+      "success_rate": 0.0,
+      "median_gap": 0.0004918808169292613,
+      "p95_gap": 0.0015868018385466482
     },
     {
       "shots": 150,
       "feasibility_rate": 1.0,
-      "success_rate": 0.025,
-      "median_gap": 0.0004889488977029857,
-      "p95_gap": 0.0010016205886302935
+      "success_rate": 0.0,
+      "median_gap": 0.00044579978542532925,
+      "p95_gap": 0.001526059275328433
     },
     {
       "shots": 200,
       "feasibility_rate": 1.0,
-      "success_rate": 0.0175,
-      "median_gap": 0.0004598329696819455,
-      "p95_gap": 0.0010016205886302935
+      "success_rate": 0.0,
+      "median_gap": 0.00044579978542532925,
+      "p95_gap": 0.001526059275328433
     },
     {
       "shots": 250,
       "feasibility_rate": 1.0,
-      "success_rate": 0.015,
-      "median_gap": 0.0003719338247104814,
-      "p95_gap": 0.0010016205886302935
+      "success_rate": 0.0,
+      "median_gap": 0.00037583490531117164,
+      "p95_gap": 0.001081268104543703
     },
     {
       "shots": 300,
       "feasibility_rate": 1.0,
-      "success_rate": 0.0325,
-      "median_gap": 0.0003719338247104814,
-      "p95_gap": 0.0010016205886302935
+      "success_rate": 0.0,
+      "median_gap": 0.00034570083051623874,
+      "p95_gap": 0.0010369051736202164
     },
     {
       "shots": 400,
       "feasibility_rate": 1.0,
-      "success_rate": 0.025,
-      "median_gap": 0.0004598329696819455,
-      "p95_gap": 0.0010026784247125135
+      "success_rate": 0.0,
+      "median_gap": 0.00034570083051623874,
+      "p95_gap": 0.0010369051736202164
     },
     {
       "shots": 500,
       "feasibility_rate": 1.0,
-      "success_rate": 0.0075,
-      "median_gap": 0.0005028698195524422,
-      "p95_gap": 0.0009868595508381733
+      "success_rate": 0.0,
+      "median_gap": 0.00034570083051623874,
+      "p95_gap": 0.0009122478376472529
     }
   ],
   "noisy_line_losses": [
@@ -76,74 +76,81 @@
       "shots": 25,
       "feasibility_rate": 1.0,
       "success_rate": 0.0,
-      "median_gap": 0.0010803244434270858,
-      "p95_gap": 0.002028258616359723
+      "median_gap": 0.0011322388762049725,
+      "p95_gap": 0.002080222207495533
     },
     {
       "shots": 50,
       "feasibility_rate": 1.0,
       "success_rate": 0.0,
-      "median_gap": 0.0006954780239592235,
-      "p95_gap": 0.0015932129073061845
+      "median_gap": 0.0007473724992141369,
+      "p95_gap": 0.0016451539376637365
     },
     {
       "shots": 75,
       "feasibility_rate": 1.0,
       "success_rate": 0.0,
-      "median_gap": 0.0006449510944766644,
-      "p95_gap": 0.0015814371009395685
+      "median_gap": 0.0006968429494854098,
+      "p95_gap": 0.001633377520622539
     },
     {
       "shots": 100,
       "feasibility_rate": 1.0,
       "success_rate": 0.0,
-      "median_gap": 0.0006110030219142892,
-      "p95_gap": 0.0015216034228309465
+      "median_gap": 0.0006628931164300072,
+      "p95_gap": 0.0015735407396345734
     },
     {
       "shots": 150,
       "feasibility_rate": 1.0,
       "success_rate": 0.0,
-      "median_gap": 0.0006110030219142892,
-      "p95_gap": 0.0016042049144259028
+      "median_gap": 0.0006628931164300072,
+      "p95_gap": 0.0016561465148114546
     },
     {
       "shots": 200,
       "feasibility_rate": 1.0,
       "success_rate": 0.0,
-      "median_gap": 0.000551530492015541,
-      "p95_gap": 0.0015132006136679486
+      "median_gap": 0.0006034175023804869,
+      "p95_gap": 0.0015651374947152623
     },
     {
       "shots": 250,
       "feasibility_rate": 1.0,
       "success_rate": 0.0,
-      "median_gap": 0.000551530492015541,
-      "p95_gap": 0.001474246530663383
+      "median_gap": 0.0006034175023804869,
+      "p95_gap": 0.0015261813916139333
     },
     {
       "shots": 300,
       "feasibility_rate": 1.0,
       "success_rate": 0.0,
-      "median_gap": 0.0005194432135102813,
-      "p95_gap": 0.0014741244177471126
+      "median_gap": 0.0005713285598800189,
+      "p95_gap": 0.0015260592723650812
     },
     {
       "shots": 400,
       "feasibility_rate": 1.0,
       "success_rate": 0.0,
-      "median_gap": 0.0004698178965236319,
-      "p95_gap": 0.0014717782255356247
+      "median_gap": 0.000521700669403391,
+      "p95_gap": 0.0015237129584837982
     },
     {
       "shots": 500,
       "feasibility_rate": 1.0,
       "success_rate": 0.0,
-      "median_gap": 0.0004698178965236319,
-      "p95_gap": 0.001460301231612453
+      "median_gap": 0.000521700669403391,
+      "p95_gap": 0.0015122353693819831
     }
   ],
-  "true_optimum": 207484.7524714511,
+  "true_optimum": 207473.99320028158,
+  "true_optimum_is_proven": true,
+  "best_placement": [
+    3,
+    4,
+    8,
+    14
+  ],
   "n_trials": 400,
-  "n_placements_evaluated": 760
+  "n_placements_evaluated": 1001
 }

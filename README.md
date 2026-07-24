@@ -536,10 +536,22 @@ itself does not depend on T.
 
 ## Limitations
 
-- DC power flow approximation only: lossless branches, no reactive power,
-  no voltage magnitude/angle constraints. Line losses are a known, deliberately
-  scoped-out gap (see repo TODO) — Plexos comparisons use resistance-based
-  losses, this model does not.
+- DC power flow approximation only: no reactive power, no voltage
+  magnitude/angle constraints. Resistance-based line losses are available as
+  an opt-in `line_losses=True` mode (classical Benders siting solver and the
+  quantum candidate-evaluation path), but the default is still lossless —
+  Plexos comparisons use resistance-based losses, this model's default does
+  not.
+- Neither the classical nor the quantum path has a *proven* global optimum
+  for the loss-aware objective in general — `siting_mip.py`'s exact
+  branch-and-bound solver only supports the lossless objective, and the
+  classical Benders `line_losses=True` mode re-solves only a lossless-ranked
+  shortlist (`loss_top_k`) with real losses, not an exhaustive search. For
+  the IEEE14 4-battery use case specifically, the loss-aware optimum has been
+  proven by full enumeration (all C(14,4) = 1,001 placements, each an exact
+  UC solve): **207,473.99 at buses (3, 4, 8, 14)** — see
+  `solvers/stop_conditions.md` for the full methodology and the
+  noiseless-vs-noisy IonQ shot sweep run against this proven reference.
 - Unit Commitment models per-generator on/off commitment with no-load and
   startup costs (`solvers/uc.py`), but has no ramp-rate constraints and no
   minimum up/down time constraints — two features standard in full commercial

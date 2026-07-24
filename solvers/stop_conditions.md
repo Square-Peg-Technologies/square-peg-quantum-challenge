@@ -412,54 +412,78 @@ job:
 
 Together these let the loss-aware cost cache be batch-computed across all
 CPU cores, the same way the lossless cache was, instead of one-at-a-time
-against the live grid object. Re-using the same saved 10k-shot noisy sample
-(no retraining, no new qBraid job), the 496 unique weight-4 placements it
-contains were re-evaluated with losses on in parallel, and the same
-bootstrap methodology (400 trials/shot level, 25 through 500 shots) was
-re-run against this loss-aware cache:
+against the live grid object.
 
-![Optimality gap and success rate vs. shots, with line losses](stop_conditions_figures/sweep_optimality_gap_vs_shots_line_losses.png)
+**Proven loss-aware global optimum.** Earlier drafts of this sweep used a
+"best found so far" reference built from placements sampled out of VQA shot
+distributions (up to 760 of the 1001 possible 4-battery placements) — an
+estimate, not a proof, since `siting_mip.py`'s exact branch-and-bound solver
+only supports the lossless objective, and the classical Benders siting
+solver's own `line_losses=True` mode (`solvers/siting_benders.py`) is itself
+a shortlist heuristic (ranks placements cheaply/lossless, re-solves only the
+top `loss_top_k` with real losses), not an exhaustive proof either. Since the
+full search space is only C(14,4) = 1001 placements — small enough to just
+solve exactly — every one was batch-evaluated with `line_losses=True`
+(parallel worker pool, ~22 minutes, `solvers/stop_conditions_data/exhaustive_loss_aware_optimum.py`).
+Each placement's cost comes from an exact UC solve, so the resulting best
+cost is a genuine proven global optimum for the loss-aware objective, not an
+estimate:
 
-| Shots | Feasibility rate | Success rate | Median gap | P95 gap |
-|---:|---:|---:|---:|---:|
-| 25  | 100.0% | 1.0% | 0.0786% | 0.1734% |
-| 50  | 100.0% | 4.8% | 0.0402% | 0.1299% |
-| 75  | 100.0% | 4.2% | 0.0351% | 0.1287% |
-| 100 | 100.0% | 4.5% | 0.0317% | 0.1227% |
-| 150 | 100.0% | 3.5% | 0.0317% | 0.1310% |
-| 200 | 100.0% | 4.5% | 0.0258% | 0.1219% |
-| 250 | 100.0% | 4.8% | 0.0258% | 0.1180% |
-| 300 | 100.0% | 8.5% | 0.0226% | 0.1180% |
-| 400 | 100.0% | 8.8% | 0.0176% | 0.1178% |
-| 500 | 100.0% | 7.5% | 0.0176% | 0.1166% |
+**Proven loss-aware optimum: 207,473.99 at placement buses (3, 4, 8, 14).**
+(For comparison, the earlier 760-placement sample-based estimate was
+207,484.75 — only ~0.005% off, so the estimate had already been very close,
+but this number is now certain rather than a lower bound.)
 
-**Three metrics, three different pictures.** Feasibility is ~100% at every
-shot level (the ~25% per-shot weight-4 hit rate found earlier is already
-enough to make finding *a* feasible candidate a near-certainty by 25 shots —
-feasibility was never really the bottleneck once training converged
-properly). Success rate — the strict, all-or-nothing probability that a
-trial's best candidate is an *exact* match to the best-found placement,
-rather than merely close to it — is a much noisier, slower-moving signal:
-it climbs from ~1% at 25 shots to roughly 5-9% by 300+ shots, with visible
-trial-to-trial jitter (e.g. the 400→500-shot dip from 8.8% to 7.5% is
-bootstrap sampling noise at only 400 trials/point, not a real reversal).
-Optimality gap sits in between the other two: median gap drops smoothly from
-0.079% at 25 shots to 0.018% at 500 shots, roughly a 4-5x tightening, with
-clear diminishing returns setting in past ~200-300 shots rather than a sharp
-single breakpoint. The reference cost here (207,545.72) is the best found
-among the 496 sampled placements, not a separately-proven loss-aware global
-optimum (unlike the 193,229 lossless reference from `siting_mip.py`) —
-`siting_mip.py` does not currently support a loss-aware objective, so this is
-a strong lower-bound estimate rather than a proven one, though it comes from
-nearly half of the full 1001-placement search space.
+Re-using the same saved 10k-shot noisy sample (no retraining, no new qBraid
+job) plus a matched, freshly-drawn 10k-shot *noiseless* sample from the same
+trained circuit (COBYLA training runs on an exact statevector with no shot
+noise, so retraining under identical settings — `warm_start="zeros"`,
+`n_layers=3`, butterfly ansatz — is deterministic and reproduces the same
+circuit), the same bootstrap methodology (400 trials/shot level, 25 through
+500 shots) was run against the proven-optimum reference for both:
+
+![Noiseless vs. noisy optimality gap and success rate vs. shots, with line losses](stop_conditions_figures/sweep_noiseless_vs_noisy_line_losses.png)
+
+| Shots | Feas (noiseless) | Feas (noisy) | Success (noiseless) | Success (noisy) | Median gap (noiseless) | Median gap (noisy) | P95 gap (noiseless) | P95 gap (noisy) |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 25  | 100.0% | 100.0% | 0.0% | 0.0% | 0.1037% | 0.1132% | 0.2286% | 0.2080% |
+| 50  | 100.0% | 100.0% | 0.0% | 0.0% | 0.0767% | 0.0747% | 0.1746% | 0.1645% |
+| 75  | 100.0% | 100.0% | 0.0% | 0.0% | 0.0492% | 0.0697% | 0.1679% | 0.1633% |
+| 100 | 100.0% | 100.0% | 0.0% | 0.0% | 0.0492% | 0.0663% | 0.1587% | 0.1574% |
+| 150 | 100.0% | 100.0% | 0.0% | 0.0% | 0.0446% | 0.0663% | 0.1526% | 0.1656% |
+| 200 | 100.0% | 100.0% | 0.0% | 0.0% | 0.0446% | 0.0603% | 0.1526% | 0.1565% |
+| 250 | 100.0% | 100.0% | 0.0% | 0.0% | 0.0376% | 0.0603% | 0.1081% | 0.1526% |
+| 300 | 100.0% | 100.0% | 0.0% | 0.0% | 0.0346% | 0.0571% | 0.1037% | 0.1526% |
+| 400 | 100.0% | 100.0% | 0.0% | 0.0% | 0.0346% | 0.0522% | 0.1037% | 0.1524% |
+| 500 | 100.0% | 100.0% | 0.0% | 0.0% | 0.0346% | 0.0522% | 0.0912% | 0.1512% |
+
+**Success rate collapses to 0% for both, and that itself is informative.**
+Against the true proven optimum, neither the noiseless nor the noisy 10,000
+-shot sample ever produced the exact optimal placement (3, 4, 8, 14) at any
+tested shot count — success rate is a flat 0% across the board for both.
+This says something real: exact-match success is a much harder bar than
+"close," and reaching it reliably within a practical shot budget (tens to
+hundreds of shots) isn't realistic for this ansatz/training setup, noise or
+no noise. It also means success rate isn't a useful metric for
+distinguishing noiseless from noisy at these shot counts — both hit the
+floor. Feasibility is ~100% for both at every shot level (unaffected by
+noise here). The metric that does differentiate is optimality gap: noiseless
+is lower than noisy at most shot levels (e.g. at 500 shots, 0.0346% vs.
+0.0522% median gap), consistent with the noise model degrading solution
+quality, though the two curves overlap at a few points (e.g. 50 shots) —
+with only 400 bootstrap trials/point, sub-0.05-percentage-point differences
+are within sampling noise, so the *trend* (noiseless generally at or below
+noisy) is the reliable takeaway, not every individual crossing.
 
 **Bottom line for QPU shot budgeting:** at 500 shots (one real Forte-1 run),
-expect a feasible placement essentially every time, within roughly 0.02%
-(median) to 0.12% (P95) of the best-found cost — a very small, likely
-acceptable gap for this problem. Going lower (e.g. 100-200 shots) costs
-little in practice (~0.03% median gap) if shot budget were tighter, but 500
-shots is a reasonable, comfortable choice given the two-run budget, without
-needing to push toward the higher end of what was tested.
+expect a feasible placement every time, within roughly 0.05% (median) to
+0.15% (P95) of the proven optimal cost — a very small, likely acceptable gap
+for this problem, even accounting for real hardware noise. Exact-match
+success isn't realistic at any tested shot count, so it shouldn't be the bar
+for judging whether a QPU run "worked" — optimality gap and feasibility are
+the metrics that matter for this budget. Going lower (e.g. 100-200 shots)
+costs little in practice (~0.05-0.07% median gap under noise), but 500 shots
+remains a reasonable, comfortable choice given the two-run budget.
 
 ### Circuit resource cost (depth, gate count)
 
