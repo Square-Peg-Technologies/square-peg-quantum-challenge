@@ -1,0 +1,49 @@
+import os
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+# Renders the "Circuit resource cost (depth, gate count)" table from
+# stop_conditions.md (butterfly ansatz, 19 qubits, 3 layers) as a PNG.
+
+SCRATCH = os.path.dirname(os.path.abspath(__file__))
+FIG_DIR = os.path.join(os.path.dirname(SCRATCH), "stop_conditions_figures")
+
+columns = ["Metric", "Abstract\n(Qiskit-native gates)", "Transpiled\n(rz/ry/rx/rxx basis, opt_level=1)"]
+rows = [
+    ["Circuit depth", "70", "189"],
+    ["Total gates", "249", "774"],
+    ["Two-qubit (entangling) gates", "192 (rzx)", "192 (rxx)"],
+]
+
+fig, ax = plt.subplots(figsize=(8, 2.2))
+ax.axis("off")
+
+table = ax.table(cellText=rows, colLabels=columns, cellLoc="center", loc="center")
+table.auto_set_font_size(False)
+table.set_fontsize(10)
+table.scale(1, 2.2)
+
+for (row, col), cell in table.get_celld().items():
+    cell.set_edgecolor("#cccccc")
+    if row == 0:
+        cell.set_facecolor("#0d9488")
+        cell.set_text_props(color="white", weight="bold")
+    else:
+        cell.set_facecolor("#f5f5f5" if row % 2 == 0 else "white")
+    if col == 0:
+        cell.set_text_props(ha="left")
+        cell.PAD = 0.03
+
+ax.set_title(
+    "Circuit resource cost — butterfly ansatz, 19 qubits (5 gen-commitment + 14 battery-siting), "
+    "3 layers, 114 params",
+    fontsize=9, pad=14,
+)
+
+fig.tight_layout()
+out_path = os.path.join(FIG_DIR, "circuit_resource_cost_table.png")
+fig.savefig(out_path, dpi=200, bbox_inches="tight")
+plt.close(fig)
+print(f"Saved {out_path}")
