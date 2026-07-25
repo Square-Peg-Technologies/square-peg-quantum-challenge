@@ -42,20 +42,13 @@ POWERFLOW_DIR = os.path.join(OUT_DIR, "powerflow")
 SETTINGS_PATH = os.path.join(OUT_DIR, "dashboard_settings.json")
 HISTORY_PATH = os.path.join(OUT_DIR, "dashboard_history.json")
 
-# Short labels so dropdowns don't get cut off; full descriptions go in info=
+# Short labels so dropdowns don't get cut off. info= renders as inline text
+# under the label (not a tooltip), so these stay to a few words — the full
+# explanations live in the markdown blurb under the Quantum Siting control row.
 BACKEND_CHOICES = ["Qiskit", "Aer TN"]
-BACKEND_INFO = "Qiskit = local CPU statevector · Aer TN = tensor-network MPS (scales to 36+ qubits)"
+BACKEND_INFO = "local sim vs. tensor-network"
 SAMPLING_CHOICES = ["Local", "IonQ (qBraid29sim)", "IonQ (qBraid29sim, noise)"]
-SAMPLING_INFO = ("Local = same simulator as training (free) · "
-                 "IonQ (qBraid29sim) = real qBraid-routed IonQ simulator "
-                 "for the final shot sample (free — only real QPU hardware bills credits) · "
-                 "IonQ (qBraid29sim, noise) = same, with the Forte-1 hardware "
-                 "noise model applied (also free)")
-STAGE_CHOICES = ["ED", "UC"]
-STAGE_INFO = "ED: fix commitment + placement · UC: re-solve commitment, fix placement"
-WARM_START_CHOICES = ["zeros", "random", "sdp"]
-WARM_START_INFO = ("zeros: θ=0 paper sim default · random: IonQ hardware default · "
-                   "sdp: LP-relaxation warm start")
+SAMPLING_INFO = "where the final shot sample runs"
 
 # Old long labels from earlier saved settings → new short labels
 _LABEL_MIGRATION = {
@@ -438,6 +431,15 @@ def _cached_uc(use_case, assets_file, T, line_losses=False):
     return (v[0], v[1], v[2]) if v else (_NOT_RUN, "", [])
 
 
+_PROBLEM_LABELS = ["Economic Dispatch", "Unit Commitment"]
+
+
+def _cached_dispatch(problem_type, use_case, assets_file, T, line_losses=False):
+    if problem_type == "Unit Commitment":
+        return _cached_uc(use_case, assets_file, T, line_losses)
+    return _cached_ed(use_case, assets_file, T, line_losses)
+
+
 def _siting_key(use_case, assets_file, T, time_limit, line_losses=False, loss_top_k=10):
     return {"use_case": use_case, "assets_file": assets_file, "T": int(T),
             "time_limit": float(time_limit), "line_losses": bool(line_losses),
@@ -557,6 +559,15 @@ def run_uc_tab(use_case: str, assets_file: str, T: float, force: bool = False,
                           key=_ed_key(use_case, assets_file, T, line_losses),
                           runtime_s=elapsed)
     return summary, text, plots, history
+
+
+def run_dispatch_tab(problem_type: str, use_case: str, assets_file: str, T: float,
+                     force: bool = False, line_losses: bool = False):
+    """Dispatches to run_ed_tab or run_uc_tab based on the merged tab's dropdown."""
+    _save_settings("dispatch", {"problem_type": problem_type})
+    if problem_type == "Unit Commitment":
+        return run_uc_tab(use_case, assets_file, T, force, line_losses)
+    return run_ed_tab(use_case, assets_file, T, force, line_losses)
 
 
 def run_siting_tab(use_case: str, assets_file: str, T: float, time_limit: float,
@@ -890,43 +901,36 @@ def build_app() -> gr.Blocks:
     with gr.Blocks(title="Quantum Storage Siting Dashboard") as app:
         gr.Markdown("# ⚡ Quantum Storage Siting Dashboard")
 
-        # ── Economic Dispatch ────────────────────────────────────────────────
-        with gr.Tab("Economic Dispatch") as ed_tab:
+        # ── Economic Dispatch / Unit Commitment ──────────────────────────────
+        with gr.Tab("Dispatch") as dispatch_tab:
+            _dispatch_default = _setting("dispatch", "problem_type", _PROBLEM_LABELS[0])
+            if _dispatch_default not in _PROBLEM_LABELS:
+                _dispatch_default = _PROBLEM_LABELS[0]
             with gr.Row():
-                ed_uc, ed_assets, ed_T = _control_bar("ed")
-                ed_losses = gr.Checkbox(value=False, label="Line Losses",
-                                        scale=0, min_width=130)
-                ed_force = gr.Checkbox(value=False, label="Re-run even if cached",
-                                       scale=0, min_width=150)
-                ed_btn = gr.Button("▶ Run", variant="primary", scale=0, min_width=120)
-            _ed0 = _cached_ed(ed_uc.value, ed_assets.value, ed_T.value, ed_losses.value)
-            ed_summary = gr.Markdown(_ed0[0])
+                d_problem = gr.Radio(_PROBLEM_LABELS, value=_dispatch_default,
+                                     label="Problem type", scale=0, min_width=220)
+                d_uc, d_assets, d_T = _control_bar("dispatch")
+                d_losses = gr.Checkbox(value=False, label="Line Losses",
+                                       scale=0, min_width=130)
+                d_force = gr.Checkbox(value=False, label="Re-run even if cached",
+                                      scale=0, min_width=150)
+                d_btn = gr.Button("▶ Run", variant="primary", scale=0, min_width=120)
+            gr.Markdown(
+                "_Tests the Economic Dispatch / Unit Commitment inner loop in isolation — "
+                "battery placement is fixed to the first 4 nodes here (from each use case's "
+                "locations.py), not optimized. For battery-placement search, use Battery "
+                "Siting (MIP) or Quantum Siting instead._"
+            )
+            _d0 = _cached_dispatch(d_problem.value, d_uc.value, d_assets.value, d_T.value,
+                                   d_losses.value)
+            d_summary = gr.Markdown(_d0[0])
             with gr.Tab("📈 Plots"):
-                ed_plots = gr.State(_ed0[2])
-                _resizable_plots(ed_plots)
+                d_plots = gr.State(_d0[2])
+                _resizable_plots(d_plots)
             with gr.Tab("🖥 Terminal"):
-                ed_term = gr.Textbox(value=_ed0[1], lines=22, max_lines=50,
-                                     buttons=["copy"], interactive=False,
-                                     label="Terminal output")
-
-        # ── Unit Commitment ──────────────────────────────────────────────────
-        with gr.Tab("Unit Commitment") as uc_tab:
-            with gr.Row():
-                uc_uc, uc_assets, uc_T = _control_bar("uc")
-                uc_losses = gr.Checkbox(value=False, label="Line Losses",
-                                        scale=0, min_width=130)
-                uc_force = gr.Checkbox(value=False, label="Re-run even if cached",
-                                       scale=0, min_width=150)
-                uc_btn = gr.Button("▶ Run", variant="primary", scale=0, min_width=120)
-            _uc0 = _cached_uc(uc_uc.value, uc_assets.value, uc_T.value, uc_losses.value)
-            uc_summary = gr.Markdown(_uc0[0])
-            with gr.Tab("📈 Plots"):
-                uc_plots = gr.State(_uc0[2])
-                _resizable_plots(uc_plots)
-            with gr.Tab("🖥 Terminal"):
-                uc_term = gr.Textbox(value=_uc0[1], lines=22, max_lines=50,
-                                     buttons=["copy"], interactive=False,
-                                     label="Terminal output")
+                d_term = gr.Textbox(value=_d0[1], lines=22, max_lines=50,
+                                    buttons=["copy"], interactive=False,
+                                    label="Terminal output")
 
         # ── Battery Siting (MIP) ─────────────────────────────────────────────
         with gr.Tab("Battery Siting (MIP)") as st_tab:
@@ -981,21 +985,20 @@ def build_app() -> gr.Blocks:
                         label="Sampling", info=SAMPLING_INFO)
                 q_ncand = gr.Slider(1, 300, value=_setting("quantum", "n_candidates", 10),
                                     step=1, label="Candidates")
-                q_stage = gr.Dropdown(
-                    STAGE_CHOICES,
-                    value=_migrate_label(_setting("quantum", "second_stage", None),
-                                         STAGE_CHOICES, "ED"),
-                    label="2nd stage", info=STAGE_INFO)
-                q_warm = gr.Dropdown(
-                    WARM_START_CHOICES,
-                    value=_migrate_label(_setting("quantum", "warm_start", None),
-                                         WARM_START_CHOICES, "zeros"),
-                    label="Warm start (Qiskit)", info=WARM_START_INFO)
-                q_ansatz = gr.Dropdown(
-                    ["Auto", "Butterfly", "Linear-chain HEA"],
-                    value=_setting("quantum", "ansatz", "Auto"),
-                    label="Ansatz",
-                    info="Auto: butterfly for statevector, linear-chain for Aer TN")
+                # 2nd stage fixed to "UC" — no longer user-configurable, dropped
+                # from the UI to shrink this row.
+                q_stage = gr.State("UC")
+                # Warm start fixed to "sdp" and ansatz fixed to "Auto" — no longer
+                # user-configurable, so dropped from the UI to shrink this row
+                # (each dropdown's info= text was adding to the row height).
+                # "Auto" (not "Butterfly") on purpose: run_quantum_siting's Auto
+                # already picks butterfly for the Qiskit/statevector backend —
+                # the same effective result — but still switches to linear-chain
+                # for Aer TN (ieee30), which butterfly's long-range entanglement
+                # is incompatible with (see solvers/quantum_siting.py:397).
+                # Hardcoding "Butterfly" literally would silently break that path.
+                q_warm = gr.State("sdp")
+                q_ansatz = gr.State("Auto")
                 q_limit = gr.Number(value=_setting("quantum", "max_time_s", 900),
                                     label="Time limit (s)", scale=0, min_width=130)
                 q_losses = gr.Checkbox(value=_setting("quantum", "line_losses", False),
@@ -1003,6 +1006,19 @@ def build_app() -> gr.Blocks:
                 q_force = gr.Checkbox(value=False, label="Re-run even if cached",
                                       scale=0, min_width=150)
                 q_btn = gr.Button("▶ Run", variant="primary", scale=0, min_width=120)
+            gr.Markdown(
+                "_**Backend**: Qiskit = local CPU statevector · Aer TN = tensor-network "
+                "MPS (scales to 36+ qubits). "
+                "**Sampling**: Local = same simulator as training (free) · "
+                "IonQ (qBraid29sim) = real qBraid-routed IonQ simulator for the final "
+                "shot sample (free — only real QPU hardware bills credits) · "
+                "IonQ (qBraid29sim, noise) = same, with the Forte-1 hardware noise model "
+                "applied (also free). "
+                "**2nd stage** is fixed to UC (full re-solve with placement fixed), "
+                "**warm start** to sdp (LP-relaxation warm start), and **ansatz** to "
+                "auto-select (butterfly for Qiskit, linear-chain for Aer TN) — none of "
+                "these three are exposed as controls here anymore._"
+            )
             gr.Markdown(
                 "_Time limit is a safety ceiling, not a target — COBYLA stops on its own "
                 "once it genuinely plateaus (114 evaluations with no improvement) or "
@@ -1036,7 +1052,9 @@ def build_app() -> gr.Blocks:
                                     label="Terminal output")
 
         # ── Power Flow ───────────────────────────────────────────────────────
-        with gr.Tab("Power Flow") as pf_tab:
+        # Hidden from the UI (backend/gallery code kept as-is, still populated
+        # by Quantum Siting runs) — set visible=True to bring the tab back.
+        with gr.Tab("Power Flow", visible=False) as pf_tab:
             gr.Markdown(
                 "Network diagrams for each candidate placement from the **latest "
                 "quantum siting run**, ranked by true cost. Node size = generator "
@@ -1065,14 +1083,13 @@ def build_app() -> gr.Blocks:
         hist_table.select(_on_history_select, outputs=[hist_term, hist_plots])
 
         pf_tab.select(lambda: gr.update(visible=False), outputs=hist_section)
-        for _tab in (ed_tab, uc_tab, st_tab, q_tab):
+        for _tab in (dispatch_tab, st_tab, q_tab):
             _tab.select(lambda: gr.update(visible=True), outputs=hist_section)
 
         # Wire run buttons (cache-first; history table refreshes on every run)
-        ed_btn.click(run_ed_tab, inputs=[ed_uc, ed_assets, ed_T, ed_force, ed_losses],
-                     outputs=[ed_summary, ed_term, ed_plots, hist_table])
-        uc_btn.click(run_uc_tab, inputs=[uc_uc, uc_assets, uc_T, uc_force, uc_losses],
-                     outputs=[uc_summary, uc_term, uc_plots, hist_table])
+        d_btn.click(run_dispatch_tab,
+                    inputs=[d_problem, d_uc, d_assets, d_T, d_force, d_losses],
+                    outputs=[d_summary, d_term, d_plots, hist_table])
         st_btn.click(run_siting_tab,
                      inputs=[st_uc, st_assets, st_T, st_limit, st_losses, st_loss_topk, st_force],
                      outputs=[st_summary, st_term, st_plots, st_table, hist_table])

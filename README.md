@@ -65,11 +65,24 @@ does not hot-reload: after pulling code changes, restart it.
 One tab per problem, each with a compact control bar of inputs on top and
 results below in sub-tabs:
 
-    Economic Dispatch     use case, assets, hours T
-    Unit Commitment       use case, assets, hours T
-    Battery Siting (MIP)  + time limit (s)
-    Quantum Siting        + backend, sampling, candidates, 2nd stage, warm start
-    Power Flow            per-candidate network diagrams (read-only gallery)
+    Dispatch               Problem type (Economic Dispatch / Unit Commitment),
+                           use case, assets, hours T
+    Battery Siting (MIP)   + time limit (s)
+    Quantum Siting         + backend, sampling, candidates, 2nd stage, warm start
+
+Economic Dispatch and Unit Commitment share a single "Dispatch" tab, switched
+via a "Problem type" radio next to the control bar — same inputs, same
+Plots/Terminal sub-tabs either way; only the backend solver called on Run
+differs (`solvers/ed.py` vs `solvers/uc.py`, both unchanged). A note under the
+controls flags that battery placement on this tab is fixed to each use case's
+`locations.py` (not optimized) — use Battery Siting (MIP) or Quantum Siting
+for placement search.
+
+The Power Flow tab (per-candidate network diagrams from the latest Quantum
+Siting run) is currently hidden from the UI — the backend/gallery code is
+unchanged and still populated by every Quantum Siting run, it's just not
+shown as a tab (`visible=False` on that `gr.Tab` in `dashboard.py`; flip it
+back to bring it back).
 
 Sub-tabs per problem: Results (quantum only — candidate ranking table),
 Plots (all of the run's plots side by side, scaled to fit the window),
@@ -93,9 +106,10 @@ overwrite the shared filenames in `outputs/`.
 Run history — a strip at the bottom of every problem tab lists all past runs
 (any problem, newest first) and survives restarts.
 
-Power Flow tab — after a Quantum Siting run, shows one network diagram per
-evaluated candidate placement, ranked by true cost — committed/off
-generators, battery buses, and per-line max loading (orange ≥70%, red ≥90%).
+Power Flow (hidden, see above) — when re-enabled, shows one network diagram
+per evaluated candidate placement from the latest Quantum Siting run, ranked
+by true cost — committed/off generators, battery buses, and per-line max
+loading (orange ≥70%, red ≥90%).
 
 Comparing classical vs quantum — Battery Siting (MIP) and Quantum Siting
 solve the same problem; the quantum tab generates the same grid +
@@ -590,6 +604,16 @@ itself does not depend on T.
   or fewer), exhaustive classical search is cheap enough that the quantum
   step's current value is in demonstrating the VQA candidate-generation
   pipeline end-to-end, not in a runtime advantage over classical search.
+- On solution quality, across four ieee14 scenarios (no datacenter, DC @
+  bus 4, DC @ 4 with Gen2 outage, DC @ 4 with a heatwave) the quantum
+  sieve's top-ranked placement matched the classical Benders/SCIP optimum's
+  cost exactly (0.000% gap) in three of four scenarios; in the fourth
+  (heatwave), quantum came in 0.133% cheaper because the classical run's
+  stall-detection heuristic stopped early, not because the quantum sieve
+  found a placement classical search couldn't reach. See
+  `assets/phase3_solver_comparison.png` for the full table. This
+  comparison has only been run on ieee14; pjm5 is a test-scale sample and
+  ieee30 is deferred to future work on scaling.
 
 
 ## References
