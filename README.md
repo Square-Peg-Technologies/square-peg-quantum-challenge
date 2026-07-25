@@ -480,9 +480,13 @@ Qiskit VQA path:
     Butterfly ansatz (arXiv:2505.00145), L=3 layers for simulation
     (L=6 targeted for IonQ Forte Phase 3)
     Parameters: 2 × L × (G + N)  →  114 for ieee14
-    COBYLA optimizer, 512 shots/iteration, up to 300 iterations
+    COBYLA optimizer, 512 shots/iteration, adaptive evaluation cap
+    maxfun = max(150, 6 × n_params) → 684 for ieee14 (114 params);
+    plateau detection (114 consecutive stale evals) typically stops a
+    converged run earlier — e.g. nfev=116 in a validated post-fix test
     5,000-shot final extraction, top-N candidates passed to classical stage
-    Total: ~154,000 proxy evaluations (all analytical) + N UC/ED solves
+    Total: up to ~350,000 proxy evaluations (all analytical, worst case
+    maxfun × 512) + N UC/ED solves; a converged run needing far fewer
     Simulator: qiskit-aer statevector (CPU)
 
 Aer Tensor Network (MPS) path:
