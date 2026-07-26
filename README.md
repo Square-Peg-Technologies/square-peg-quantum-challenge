@@ -704,7 +704,7 @@ itself does not depend on T.
   (heatwave), quantum came in 0.133% cheaper because the classical run's
   stall-detection heuristic stopped early, not because the quantum sieve
   found a placement classical search couldn't reach. See
-  `assets/phase3_solver_comparison.png` for the full table. This
+  `assets/phase3_solver_comparison/phase3_solver_comparison.png` for the full table. This
   comparison has only been run on ieee14; pjm5 is a test-scale sample and
   ieee30 is deferred to future work on scaling.
 
