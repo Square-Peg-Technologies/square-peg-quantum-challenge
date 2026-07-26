@@ -65,6 +65,7 @@ If Python 3.12 is on your `PATH` (Option A above, or any other way you got
 it):
 
     python3.12 -m venv .venv
+    source .venv/bin/activate   # activate the venv — repeat this in every new terminal session
     .venv/bin/python --version   # must print Python 3.12.x — stop and fix if not
     .venv/bin/pip install -r requirements.txt
 
@@ -72,6 +73,7 @@ If you built it with pyenv (Option B above):
 
     pyenv local 3.12.2
     ~/.pyenv/versions/3.12.2/bin/python -m venv .venv
+    source .venv/bin/activate   # activate the venv — repeat this in every new terminal session
     .venv/bin/python --version   # must print Python 3.12.x — stop and fix if not
     .venv/bin/pip install -r requirements.txt
 
