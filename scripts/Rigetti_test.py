@@ -27,11 +27,19 @@ will queue and bill qBraid credits. Change DEVICE_ID below to a Rigetti
 simulator route instead if you just want to confirm the submit/result flow
 without spending credits or queueing for hardware.
 
-Step 4 builds a small butterfly ansatz (the same circuit shape run_vqa_qiskit
-uses in production, just fewer qubits/layers for a quick/cheap check) and
-submits it through solvers.rigetti_qbraid_backend.run_circuit_shots() itself
-— not a hand-rolled circuit/transpile — so this is a real end-to-end check of
-the exact code path the dashboard/CLI actually use, at only 10 shots.
+Step 4 builds a butterfly ansatz (the same circuit shape run_vqa_qiskit uses
+in production) and submits it through
+solvers.rigetti_qbraid_backend.run_circuit_shots() itself — not a hand-rolled
+circuit/transpile — so this is a real end-to-end check of the exact code
+path the dashboard/CLI actually use, at only 10 shots.
+
+N_QUBITS/N_LAYERS below are configurable — bump to the real production shape
+(19 qubits, 3 layers, ieee14) to test at full scale, still just 10 shots.
+Physical qubit 8 is confirmed dead/uncalibrated on this chip (see
+solvers/rigetti_qbraid_backend.py's DEAD_QUBITS/module docstring — isolated
+here via a series of real runs, 2026-07-26) and is automatically skipped by
+run_circuit_shots' default layout, so this no longer needs a manual
+QUBIT_OFFSET workaround.
 """
 
 import os
@@ -40,6 +48,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DEVICE_ID = "rigetti:rigetti:qpu:cepheus-1-108q"
+
+N_QUBITS = 19  # real ieee14 production shape (5 gen + 14 bus)
+N_LAYERS = 3
 
 try:
     from dotenv import load_dotenv
@@ -117,11 +128,10 @@ def main():
         from solvers.quantum_siting import build_butterfly_ansatz
         from solvers.rigetti_qbraid_backend import run_circuit_shots
 
-        n_qubits, n_layers = 4, 2
-        qc, params = build_butterfly_ansatz(n_qubits, n_layers)
+        qc, params = build_butterfly_ansatz(N_QUBITS, N_LAYERS)
         bound = qc.assign_parameters({p: 0.37 for p in params})
 
-        print(f"\nSubmitting a {n_qubits}-qubit/{n_layers}-layer butterfly ansatz "
+        print(f"\nSubmitting a {N_QUBITS}-qubit/{N_LAYERS}-layer butterfly ansatz "
               f"({len(params)} params, fixed at 0.37) to: {device.id}")
 
         counts = run_circuit_shots(bound, shots=10, device_id=device.id)

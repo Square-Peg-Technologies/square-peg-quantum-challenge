@@ -59,6 +59,21 @@ that grid. Verified locally that transpiling with this coupling_map produces
 zero coupling-map violations for the butterfly ansatz. If DEVICE_ID ever
 changes to a different chip, re-run scripts/Rigetti_get_topology.py to get
 that chip's real topology instead of reusing this one.
+
+A fifth failure (2026-07-26) surfaced a specific dead qubit rather than a
+code bug: "RZ(-3.14...) 8" on the real 19-qubit ieee14 ansatz (physical
+qubits 0-18), then "RX(1.5707963267948966) 8" (a plain sx gate — already
+native) on a deliberately-constructed 4-qubit test on physical qubits
+[6,7,8,9]. Both errors are the QCS compiler's generic "must be replaced or
+decomposed" message, which it also reuses for "this qubit has no
+calibration data to schedule against" — not just "wrong gate type." Isolated
+via scripts/Rigetti_test.py: succeeded on physical qubits [0,1,2,3] and
+[10,11,12,13] (confirmed twice independently), failed on [6,7,8,9] and
+[0..18] — every failure and only the failures touch physical qubit 8.
+DEAD_QUBITS below excludes it from qubit placement. This is evidenced for
+qubit 8 specifically, not proven to be the *only* bad site on this chip — if
+a future run against a different qubit range fails the same way, add that
+qubit here too.
 """
 
 from __future__ import annotations
@@ -76,16 +91,40 @@ import os
 # (get_device(...).profile) for its actual native gates.
 NATIVE_GATES = ["rz", "sx", "cz"]
 
+# Physical qubits confirmed dead/uncalibrated via real QCS runs (see module
+# docstring's fifth/sixth-failure rounds, 2026-07-26). Only qubit 8 has been
+# directly evidenced so far.
+DEAD_QUBITS = {8}
+
 # Cepheus-1-108Q's real qubit connectivity (square lattice, 12 rows x 9
 # cols — 108 sites, one disabled per profile.num_qubits=107), fetched via
 # scripts/Rigetti_get_topology.py, 2026-07-26. Needed so transpile() can
 # route the ansatz's non-adjacent two-qubit gates with SWAPs instead of
 # emitting a CZ between physically disconnected qubits (see module
-# docstring's topology-error round). Built lazily since qiskit's
-# CouplingMap import isn't needed unless run_circuit_shots is actually called.
+# docstring's topology-error round). Edges touching DEAD_QUBITS are stripped
+# out entirely (not just left out of the initial layout) — a round-6 real
+# run showed Sabre's routing pass will still route SWAPs *through* a dead
+# qubit mid-circuit if the coupling map lists it as connected, even when no
+# logical qubit starts there; removing its edges makes it structurally
+# unreachable by any two-qubit gate or SWAP, not just avoided at placement
+# time. Built lazily since qiskit's CouplingMap import isn't needed unless
+# run_circuit_shots is actually called.
 def _coupling_map():
     from qiskit.transpiler import CouplingMap
-    return CouplingMap.from_grid(12, 9)
+    full = CouplingMap.from_grid(12, 9)
+    edges = [e for e in full.get_edges() if not (set(e) & DEAD_QUBITS)]
+    return CouplingMap(edges)
+
+
+def _default_layout(n_qubits: int) -> list[int]:
+    """Contiguous physical qubits starting at 0, skipping DEAD_QUBITS."""
+    layout = []
+    candidate = 0
+    while len(layout) < n_qubits:
+        if candidate not in DEAD_QUBITS:
+            layout.append(candidate)
+        candidate += 1
+    return layout
 
 # --- Single swap point for the target device --------------------------------
 # Real Rigetti QCS QPU (confirmed working manually 2026-07-26, billed against
@@ -144,7 +183,8 @@ def get_device(device_id: str = DEVICE_ID):
 
 
 def run_circuit_shots(circuit, shots: int | None = None, device_id: str = DEVICE_ID,
-                      timeout: int = 600) -> dict[str, int]:
+                      timeout: int = 600,
+                      initial_layout: list[int] | None = None) -> dict[str, int]:
     """Submit a Qiskit circuit to the qBraid-routed Rigetti QPU and return counts.
 
     circuit must already include measurement (e.g. built with .measure_all(),
@@ -154,21 +194,29 @@ def run_circuit_shots(circuit, shots: int | None = None, device_id: str = DEVICE
 
     shots defaults to default_shots(device_id) — 200, since this is real
     billed QPU hardware with no free-simulator route to fall back to.
+
+    initial_layout: physical qubit indices to pin virtual qubits 0..n-1 to
+    (default: identity, i.e. [0, 1, ..., n-1]). Exposed mainly for
+    scripts/Rigetti_test.py to probe specific physical qubits (e.g. whether
+    a particular site is dead/uncalibrated) without changing the circuit.
     """
     if shots is None:
         shots = default_shots(device_id)
+    if initial_layout is None:
+        # Contiguous physical qubits starting at 0, skipping DEAD_QUBITS
+        # (confirmed via real runs — see module docstring). circuit already
+        # has measure_all() applied (bound before this call), so Qiskit's
+        # routing keeps each measured classical bit tied to its original
+        # virtual qubit regardless of any mid-circuit SWAPs — pinning a
+        # specific layout isn't required for that correctness, it's just
+        # what lets us steer placement away from a known-dead site rather
+        # than letting transpile pick its own across all 108 sites.
+        initial_layout = _default_layout(circuit.num_qubits)
 
     from qiskit import transpile as qiskit_transpile
-    # initial_layout pinned to identity (virtual qubit i -> physical qubit i):
-    # circuit already has measure_all() applied (bound before this call), so
-    # Qiskit's routing keeps each measured classical bit tied to its original
-    # virtual qubit regardless of any mid-circuit SWAPs — this pin isn't
-    # required for correctness, just keeps the physical-qubit mapping
-    # predictable/debuggable rather than transpile picking its own placement
-    # across all 108 sites (including whichever one is disabled).
     native_circuit = qiskit_transpile(
         circuit, basis_gates=NATIVE_GATES, coupling_map=_coupling_map(),
-        initial_layout=list(range(circuit.num_qubits)), optimization_level=3,
+        initial_layout=initial_layout, optimization_level=3,
     )
 
     device = get_device(device_id)
