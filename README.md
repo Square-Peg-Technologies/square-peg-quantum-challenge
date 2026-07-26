@@ -30,15 +30,40 @@ If you already have Python 3.12 installed, use it directly:
     .venv/bin/python --version   # must print Python 3.12.x — stop and fix if not
     .venv/bin/pip install -r requirements.txt
 
-If you don't have Python 3.12 available, install it with pyenv first:
+If you don't have Python 3.12 available, on Ubuntu/Debian/Mint the fastest
+fix is a prebuilt package via the deadsnakes PPA (no compiling, works in
+under a minute):
 
+    sudo apt update && sudo apt install -y software-properties-common
+    sudo add-apt-repository ppa:deadsnakes/ppa
+    sudo apt update
+    sudo apt install python3.12 python3.12-venv
+    python3.12 -m venv .venv
+    .venv/bin/python --version   # must print Python 3.12.x — stop and fix if not
+    .venv/bin/pip install -r requirements.txt
+
+If deadsnakes isn't an option (non-Ubuntu-based distro, or you specifically
+need pyenv's per-project version management), pyenv works too, but it
+**compiles Python from source** — install the full build-dependency list
+first, or it will silently produce a Python missing standard-library pieces
+(e.g. `ModuleNotFoundError: No module named '_ctypes'` the first time
+something needs it, often well after the install finished with no error):
+
+    sudo apt install -y build-essential libssl-dev zlib1g-dev libbz2-dev \
+      libreadline-dev libsqlite3-dev libncursesw5-dev tk-dev libxml2-dev \
+      libxmlsec1-dev libffi-dev liblzma-dev
     curl https://pyenv.run | bash
     exec $SHELL   # reload your shell so the pyenv command is available
     pyenv install 3.12.2
+    ~/.pyenv/versions/3.12.2/bin/python3.12 -c "import ctypes"   # must print nothing/exit 0 — if this errors, libffi-dev wasn't picked up: uninstall (pyenv uninstall 3.12.2), confirm libffi-dev is installed, and re-run pyenv install
     pyenv local 3.12.2
     ~/.pyenv/versions/3.12.2/bin/python -m venv .venv
     .venv/bin/python --version   # must print Python 3.12.x — stop and fix if not
     .venv/bin/pip install -r requirements.txt
+
+If you already ran `pyenv install` before installing those libraries, the
+build is broken and needs a clean rebuild — `pyenv uninstall 3.12.2`, then
+re-run `pyenv install 3.12.2` after the `apt install` above.
 
 Always activate the venv or use `.venv/bin/python` explicitly — never system python.
 
