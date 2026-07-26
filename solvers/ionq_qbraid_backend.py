@@ -36,10 +36,13 @@ MIN_SHOTS = 100
 # simulator route if that ever changes.
 FREE_SIMULATOR_ID = "ionq:ionq:sim:simulator"
 
-# Default shots on the free simulator: no cost penalty for over-sampling, so
-# use enough to match the local "qiskit"/"aer_tn" backends' final sample size
-# and avoid spurious infeasible candidates from an under-sampled distribution.
-DEFAULT_SHOTS_SIMULATOR = 5000
+# Default shots on the free simulator. Originally 5000 (to match the local
+# backends' final sample size), but the shots-vs-optimality-gap sweep below
+# (DEFAULT_SHOTS_HARDWARE) showed the optimality gap already flattens hard by
+# 100 shots — no real cost penalty on the free simulator, but no accuracy
+# reason to keep oversampling either, so this now matches the hardware
+# default (2026-07-26).
+DEFAULT_SHOTS_SIMULATOR = 100
 
 # Noise model applied when run_circuit_shots(..., noisy=True) is used: still
 # the same simulator device (capped at 29 qubits regardless of noise model —

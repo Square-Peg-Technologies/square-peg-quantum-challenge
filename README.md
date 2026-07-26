@@ -100,7 +100,7 @@ with a one-line change:
     Hidden asset files  4batt_dcbus1.py, 4batt_dcbus2.py, 4batt_dcbus5.py
     Fixed controls      Battery Siting: Time limit → 600s, Loss re-solve
                         top-K → 20 (both locked, non-interactive)
-                        Quantum Siting: Candidates → 20, Time limit → 600s
+                        Quantum Siting: Candidates → 20, Time limit → 60s
                         (both locked, non-interactive); Backend dropdown
                         removed from the UI, fixed to Qiskit
 
@@ -122,7 +122,7 @@ results below in sub-tabs:
     Battery Siting (MIP)   + time limit (s, fixed to 600, non-interactive),
                            loss re-solve top-K (fixed to 20, non-interactive)
     Quantum Siting         + sampling, candidates (fixed to 20, non-interactive),
-                           time limit (s, fixed to 600, non-interactive),
+                           time limit (s, fixed to 60, non-interactive),
                            2nd stage, warm start
 
 Economic Dispatch and Unit Commitment share a single "Dispatch" tab, switched
@@ -153,9 +153,10 @@ simulator that trained the circuit (no credentials needed); **IonQ
 (qBraid29sim)**/**IonQ (qBraid29sim, noise)**, a real qBraid-routed IonQ
 simulator submission for just that final shot sample (free — only real QPU
 hardware bills credits; the noise variant applies the Forte-1 hardware noise
-model, also free); or **Rigetti (qBraid QPU)**, a real Rigetti QCS QPU
-submission for the final shot sample (bills qBraid credits/QCS time — no
-free-simulator route for Rigetti). The two qBraid-routed options need a
+model, also free); or **Rigetti (qBraid QPU)**, a real submission to
+Rigetti's Cepheus-1-108Q QPU via qBraid QCS for the final shot sample (bills
+qBraid credits/QCS time — no free-simulator route for Rigetti). The two
+qBraid-routed options need a
 qBraid API key — see "qBraid API Key" under Setup above. Any mid-run failure
 pops a warning toast and the traceback lands in the Terminal sub-tab.
 
@@ -332,8 +333,8 @@ Four levels of power system optimization, all including battery storage dynamics
      circuit for a real final shot sample on qBraid-routed IonQ
      hardware/simulator (training still runs locally either way — Qiskit VQA
      is compatible with IonQ Forte gate hardware). Rigetti via qBraid:
-     submits the converged circuit to a real Rigetti QCS QPU for the final
-     shot sample — requires client-side transpilation to Rigetti's native
+     submits the converged circuit to Rigetti's Cepheus-1-108Q QPU for the
+     final shot sample — requires client-side transpilation to Rigetti's native
      gate set and a real qubit-connectivity coupling map before submission,
      since qBraid's own compilation pipeline doesn't do this automatically
      for non-IonQ providers (see solvers/rigetti_qbraid_backend.py).
@@ -571,10 +572,22 @@ Qiskit VQA path:
     maxfun = max(150, 6 × n_params) → 684 for ieee14 (114 params);
     plateau detection (114 consecutive stale evals) typically stops a
     converged run earlier — e.g. nfev=116 in a validated post-fix test
-    5,000-shot final extraction, top-N candidates passed to classical stage
+    Final sampling shots — Local: 5,000. IonQ (qBraid29sim): 100 (IonQ's
+    minimum accepted shot count; the optimality gap vs. the real optimum
+    already flattens hard by this point — solvers/stop_conditions.md).
+    Rigetti (qBraid QPU): 200. Top-N candidates passed to classical stage
+    either way.
     Total: up to ~350,000 proxy evaluations (all analytical, worst case
     maxfun × 512) + N UC/ED solves; a converged run needing far fewer
-    Simulator: qiskit-aer statevector (CPU)
+    Simulator: Qiskit StatevectorSampler (CPU) — or qiskit-aer's, if
+    reinstalled (see qiskit-aer note under Setup)
+    Circuit depth/gates (ieee14, 19 qubits, 3 layers): 70 depth, 192
+    entangling (rzx) gates as sent to IonQ (no client-side transpile — IonQ
+    hardware is all-to-all connected). Rigetti requires client-side
+    transpile + real coupling-map routing (Cepheus-1-108Q, square lattice —
+    solvers/rigetti_qbraid_backend.py): ~1460 depth, ~1000 two-qubit (cz)
+    gates post-routing — expect correspondingly higher hardware noise than
+    the IonQ path.
 
 Aer Tensor Network (MPS) path:
     Linear-chain HEA ansatz, L=4 layers

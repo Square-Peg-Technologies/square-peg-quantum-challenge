@@ -372,9 +372,9 @@ def run_vqa_qiskit(
         solvers/rigetti_qbraid_backend.py). COBYLA training always runs
         locally regardless of final_backend. final_shots is only used in the
         qBraid-routed cases; if None (default), resolves via that backend
-        module's default_shots(DEVICE_ID) — 5000 on the IonQ free simulator,
-        500 on billed real IonQ hardware, 100 on the (always billed) Rigetti
-        QPU. The local path always uses 5000 shots for the final extraction.
+        module's default_shots(DEVICE_ID) — 100 on IonQ (simulator or real
+        hardware alike), 200 on the (always billed) Rigetti QPU. The local
+        path always uses 5000 shots for the final extraction.
 
     candidates: list of (u_bits, s_bits, proxy_cost) sorted ascending by proxy_cost.
     convergence_trace: COBYLA objective value at each function evaluation (empty if
@@ -833,8 +833,7 @@ def run_quantum_siting(
                        final_backend is one of the qBraid-routed values
                        (minimum 100 for IonQ). If None (default), auto-picked
                        by that backend module's default_shots() based on
-                       DEVICE_ID (5000 on the IonQ free simulator, 500 on
-                       billed real IonQ hardware, 100 on the Rigetti QPU).
+                       DEVICE_ID (100 on IonQ, 200 on the Rigetti QPU).
                        Unused otherwise.
     line_losses      : if True, the quantum sieve and initial classical
                        refinement stay lossless (unchanged), then every
