@@ -52,9 +52,9 @@ something needs it, often well after the install finished with no error):
     sudo apt install -y build-essential libssl-dev zlib1g-dev libbz2-dev \
       libreadline-dev libsqlite3-dev libncursesw5-dev tk-dev libxml2-dev \
       libxmlsec1-dev libffi-dev liblzma-dev
-    curl https://pyenv.run | bash
+    [ -d ~/.pyenv ] || curl https://pyenv.run | bash   # safe to re-run this whole block: skips reinstalling pyenv if it's already there
     exec $SHELL   # reload your shell so the pyenv command is available
-    pyenv install 3.12.2
+    pyenv install 3.12.2   # if this says the version already exists, run `pyenv uninstall 3.12.2` first, then re-run this line
     ~/.pyenv/versions/3.12.2/bin/python3.12 -c "import ctypes, bz2, sqlite3, lzma, curses, readline"   # must print nothing/exit 0 — if this errors, a build library wasn't picked up: uninstall (pyenv uninstall 3.12.2), confirm the apt install above ran, and re-run pyenv install
     pyenv local 3.12.2
     ~/.pyenv/versions/3.12.2/bin/python -m venv .venv
