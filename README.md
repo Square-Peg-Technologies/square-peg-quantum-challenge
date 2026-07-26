@@ -55,6 +55,23 @@ is the whole story.
 
 Two ways to run: the browser dashboard (recommended) or the interactive CLI.
 
+Judge-facing build note: a few use cases, asset files, and controls are
+currently hidden from both the dashboard and the CLI to keep the demo focused
+— none of the underlying code or data was removed, so all of it comes back
+with a one-line change:
+
+    Hidden use cases    ieee30, ieee14_plexos_basecase, pjm5
+                        (only ieee14 is currently selectable)
+    Hidden asset files  4batt_dcbus1.py, 4batt_dcbus2.py, 4batt_dcbus5.py
+    Fixed controls      Battery Siting: Time limit → 600s, Loss re-solve
+                        top-K → 20 (both locked, non-interactive)
+                        Quantum Siting: Candidates → 20, Time limit → 600s
+                        (both locked, non-interactive); Backend dropdown
+                        removed from the UI, fixed to Qiskit
+
+See `_hidden_ucs`/`_HIDDEN_ASSETS` in `dashboard.py` and `_HIDDEN_USE_CASES`/
+`_HIDDEN_ASSETS` in `main.py` to restore any of these.
+
 ### Dashboard (Browser UI)
 
     .venv/bin/python dashboard.py
@@ -66,9 +83,12 @@ One tab per problem, each with a compact control bar of inputs on top and
 results below in sub-tabs:
 
     Dispatch               Problem type (Economic Dispatch / Unit Commitment),
-                           use case, assets, hours T
-    Battery Siting (MIP)   + time limit (s)
-    Quantum Siting         + backend, sampling, candidates, 2nd stage, warm start
+                           use case, assets, hours T (defaults to 24)
+    Battery Siting (MIP)   + time limit (s, fixed to 600, non-interactive),
+                           loss re-solve top-K (fixed to 20, non-interactive)
+    Quantum Siting         + sampling, candidates (fixed to 20, non-interactive),
+                           time limit (s, fixed to 600, non-interactive),
+                           2nd stage, warm start
 
 Economic Dispatch and Unit Commitment share a single "Dispatch" tab, switched
 via a "Problem type" radio next to the control bar — same inputs, same
@@ -89,12 +109,17 @@ Plots (all of the run's plots side by side, scaled to fit the window),
 Runtime (quantum only — phase breakdown chart), and Terminal — the exact
 CLI output including full tracebacks, with a copy button for easy debugging.
 
-Two independent dropdowns control the Quantum Siting run: **Backend** picks
-how the VQA trains (Qiskit local CPU statevector, or Aer Tensor Network MPS),
-and **Sampling** picks where the final shot sample comes from (Local, using
-the same simulator, or IonQ (qBraid29sim), a real qBraid-routed IonQ
-hardware/simulator submission that spends qBraid credits). Any mid-run
-failure pops a warning toast and the traceback lands in the Terminal sub-tab.
+Backend (how the VQA trains) is currently fixed to Qiskit local CPU
+statevector and not exposed as a control — Aer Tensor Network (MPS) exists
+in the solver for 36+ qubit cases (ieee30, itself currently hidden — see
+note above) and is otherwise slower on the visible cases. **Sampling** picks
+where the final shot sample comes from: **Local (Qiskit)**, using the same
+simulator that trained the circuit, or **IonQ (qBraid29sim)**/**IonQ
+(qBraid29sim, noise)**, a real qBraid-routed IonQ simulator submission for
+just that final shot sample (free — only real QPU hardware bills credits;
+the noise variant applies the Forte-1 hardware noise model, also free). Any
+mid-run failure pops a warning toast and the traceback lands in the Terminal
+sub-tab.
 
 Result caching — every run is recorded with its exact input settings.
 Clicking Run with settings that were already run loads the stored results
@@ -134,15 +159,15 @@ Prompt flow — Step 1, choose the optimization:
     3. Battery Siting (exhaustive search)
     4. Quantum Siting (Hybrid VQA + Classical)
 
-For option 4 only, additional sub-prompts:
-
-    Select VQA backend (how training runs):
-      1. Qiskit (statevector simulator)
-      2. Aer Tensor Network (MPS — scales to 36+ qubits)
+For option 4 only, additional sub-prompts. The VQA backend prompt is
+currently skipped (judge-facing build) — it's hardcoded to Qiskit
+(statevector simulator); see the note near the top of this section for how
+to restore it:
 
     Sample final shots on:
-      1. Local (same simulator used for training)
-      2. IonQ via qBraid (real hardware/simulator — spends qBraid credits)
+      1. Local (Qiskit) (same simulator used for training)
+      2. IonQ via qBraid (real hardware/simulator — free simulator, QPU spends credits)
+      3. IonQ via qBraid (Forte-1 noise model — free simulator)
 
     How many candidates to evaluate classically? [default: 10]:
 
@@ -155,11 +180,13 @@ For option 4 only, additional sub-prompts:
       2. random — theta~Uniform[-2pi,2pi], paper IonQ hardware default
       3. sdp    — LP-relaxation warm start, paper Section III
 
-Step 2 — use case (ieee14 / ieee30 / pjm5). Step 3 — assets file (scanned
-from the use case directory, e.g. `4batt_dcbus4.py`). Step 4 — hours,
-bounded by the loaded case's actual demand profile (all three use cases
-build a one-week, 168-hour profile, so the prompt's max scales to whatever
-the case supports):
+Step 2 — use case. Currently only `ieee14` is offered (ieee30, pjm5, and
+ieee14_plexos_basecase are hidden from this prompt — see the note near the
+top of this section). Step 3 — assets file (scanned from the use case
+directory, e.g. `4batt_dcbus4.py`; three dcbus variants are likewise
+hidden). Step 4 — hours, bounded by the loaded case's actual demand profile
+(all use cases build a one-week, 168-hour profile, so the prompt's max
+scales to whatever the case supports):
 
     How many hours to simulate? (1-168):
 
