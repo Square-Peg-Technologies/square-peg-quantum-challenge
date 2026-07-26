@@ -4,7 +4,7 @@
 # 4batt_dcbus{N}.py file from this directory.
 #
 # p_min stays nonzero here, matching ieee14_plexos_basecase/nobatt_dcbus4.py, which
-# also now uses these floors to match the PLEXOS side's PLEXOS baseline (switched from
+# also now uses these floors to match the PLEXOS baseline (switched from
 # p_min=0/statistical to fixed/min-stable as of the V5 workbook, 2026-07-18).
 # solvers/quantum_siting.py's
 # proxy cost function approximates each generator's commitment cost as

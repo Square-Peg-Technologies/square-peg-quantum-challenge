@@ -1,10 +1,9 @@
 # PLEXOS N-1 contingency replication: Gen 2 tripped for the entire
 # optimization horizon.
 #
-# Per the PLEXOS side's 2026-07-17 email (Phase 3 - /Baseline_confirmation/
-# the PLEXOS side_EmaiJuly17l.md): "to confirm for the N-1 contingency, we agreed to
-# trip Generator 2 for the whole optimization horizon for simplicity" — a
-# full-horizon outage, not a mid-day trip. use_cases/ieee14/
+# Agreed 2026-07-17 for the N-1 contingency: "trip Generator 2 for the whole
+# optimization horizon for simplicity" — a full-horizon outage, not a
+# mid-day trip. use_cases/ieee14/
 # 4batt_dcbus4_g2out.py originally modeled a partial-day trip (hours 14-24)
 # for a different purpose (a realistic mid-day contingency scenario), but
 # was changed to full-horizon on 2026-07-21 so both files use the same

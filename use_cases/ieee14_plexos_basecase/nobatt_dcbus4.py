@@ -1,13 +1,13 @@
 # PLEXOS base-case replication assets.
 #
 # p_min matches the 50/20/20/20/20 MW floor used elsewhere in ieee14/4batt.py.
-# the PLEXOS side's PLEXOS baseline originally ran with no minimum-stable-level
+# The PLEXOS baseline originally ran with no minimum-stable-level
 # constraint (statistical approach, p_min=0, more congestion) but switched to
-# a fixed dispatch approach as of the V5 workbook (2026-07-18 email): PLEXOS's
+# a fixed dispatch approach as of the V5 workbook (2026-07-18): PLEXOS's
 # "Generator Information" tab now specifies these min-stable levels directly,
 # and generators are held above them. The quantum battery-valuation algorithm
 # requires the min-stable-level constraint, so this is the agreed target
-# going forward — the PLEXOS side confirmed in the same email.
+# going forward.
 #
 # No batteries ("No Batteries" case) — represented as a single zero-power,
 # zero-capacity dummy so the solver's battery arrays aren't empty.

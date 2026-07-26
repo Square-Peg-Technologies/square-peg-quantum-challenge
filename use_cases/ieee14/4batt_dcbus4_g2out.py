@@ -8,14 +8,13 @@
 # operator's real-time reaction to a surprise trip).
 #
 # Full-horizon (not a mid-day trip) to match PLEXOS's N-1 contingency
-# convention: per the PLEXOS side's 2026-07-17 email (Phase 3 - /Baseline_confirmation/
-# the PLEXOS side_EmaiJuly17l.md), "we agreed to trip Generator 2 for the whole
-# optimization horizon for simplicity." Previously this file modeled a
-# mid-day trip (hours 14-24) motivated by DOE OE-417's documented December
-# 16, 2023 LUMA Energy event (see Phase 3 - /Contingencies/
-# Email_from_the PLEXOS side.txt and Weather and Contingency Planning.xlsx) as a
-# distinct, non-PLEXOS scenario; changed to full-horizon 2026-07-21 so all
-# Gen 2 outage scenarios in the repo use one consistent convention.
+# convention, agreed 2026-07-17: "trip Generator 2 for the whole optimization
+# horizon for simplicity." Previously this file modeled a mid-day trip
+# (hours 14-24) motivated by DOE OE-417's documented December 16, 2023 LUMA
+# Energy event (see Phase 3 - /Contingencies/Weather and Contingency
+# Planning.xlsx) as a distinct, non-PLEXOS scenario; changed to full-horizon
+# 2026-07-21 so all Gen 2 outage scenarios in the repo use one consistent
+# convention.
 #
 # Gen 2 (140 MW, generator index 1) was picked over Gen 1 because Gen 1
 # alone is nearly half the system's total capacity (332 of 772 MW) —

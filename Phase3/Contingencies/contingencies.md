@@ -22,7 +22,7 @@ the first 24 hours of any run.
   ≈ **1.15** — this is the peak value used in `HEAT_FACTORS`.
 - Corresponding hourly temperatures (NSRDB, station 719433, near Austin, TX,
   shifted from UTC to local time): 106.9°F on Sept 6, 108.1°F on Sept 7,
-  matching a colleague's independently-sourced figures exactly. See
+  matching an independently-sourced cross-check exactly. See
   `Contingencies/ERCOT_Heat_Event_Sept2023.md` for the full derivation and
   `Contingencies/Weather and Contingency Planning v2.xlsx` (sheet
   "Heatwave Scenario") for the underlying hourly data table and comparison
@@ -74,11 +74,10 @@ mid-day trip (hours 14-24 only), motivated directly by DOE OE-417's
 documented December 16, 2023 LUMA Energy event — "Uncontrolled loss of
 300 MW or more of firm system loads for 15 minutes or more from a single
 incident," 220 MW loss, 230,330 customers affected (see
-`Contingencies/Email_from_the PLEXOS side.txt` and `Weather and Contingency
-Planning.xlsx`, OE-417 sheet). It was changed to a full-horizon trip on
-2026-07-21 to match the PLEXOS side's PLEXOS convention: per his 2026-07-17 email
-(`Phase 3 -/Baseline_confirmation/the PLEXOS side_EmaiJuly17l.md`), "we agreed to
-trip Generator 2 for the whole optimization horizon for simplicity." Both
+`Weather and Contingency Planning.xlsx`, OE-417 sheet). It was changed to a
+full-horizon trip on 2026-07-21 to match the PLEXOS side's convention: "we
+agreed to trip Generator 2 for the whole optimization horizon for
+simplicity." Both
 `4batt_dcbus4_g2out.py` and `nobatt_dcbus4_g2out.py` now use this same
 full-horizon convention.
 

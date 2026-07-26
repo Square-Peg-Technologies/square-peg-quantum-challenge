@@ -1,6 +1,6 @@
 """
 Run Quantum Siting (n_candidates=20) for the datacenter-at-bus-4 scenario and
-compare the ranked candidate placements against the PLEXOS side's PLEXOS solution pool
+compare the ranked candidate placements against the PLEXOS solution pool
 (Batteries, No Line Losses Base Case, V5: sol=0..4).
 
 Mirrors main.py's opt=4 (Quantum Siting) CLI path non-interactively:
@@ -75,17 +75,17 @@ def main():
         rank_by_buses[tuple(buses)] = rank
         print(f"{rank:<6} {str(buses):<24} {cost:>16,.0f}")
 
-    andrew = {
+    plexos_sols = {
         "sol=0": [4, 7, 8, 12],
         "sol=1": [4, 5, 8, 12],
         "sol=2": [5, 7, 8, 12],
         "sol=3": [7, 8, 12, 13],
         "sol=4": [4, 5, 7, 8],
     }
-    print("\nComparison against the PLEXOS side's PLEXOS solutions:")
+    print("\nComparison against the PLEXOS solutions:")
     print(f"{'PLEXOS sol':<10} {'Buses':<24} {'Our rank (of 20)':>18}")
     print("-" * 54)
-    for name, buses in andrew.items():
+    for name, buses in plexos_sols.items():
         key = tuple(sorted(buses))
         rank = rank_by_buses.get(key, "not in our 20")
         print(f"{name:<10} {str(buses):<24} {str(rank):>18}")

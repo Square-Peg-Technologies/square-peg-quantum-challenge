@@ -1,6 +1,6 @@
 # Contingency Run Data: accumulated for Section 6 write-up
 
-Source: fresh runs of `Phase 2 - /Git_Repo/square-peg-quantum-challenge`'s solver code, done 2026-07-22 by calling `solvers.uc.run_uc()` directly with the same setup `main.py` uses (datacenter injection, heat-factor scaling, outage constraints), for every scenario at both `line_losses=False` and `line_losses=True`. Cross-checked on 2026-07-22 against the PLEXOS side's actual PLEXOS output in `Phase 3 - /Baseline_confirmation/*.xlsx` (V6 workbooks), see the new section below, all four no-battery numbers below are independently confirmed against his model, not just our own repo standing in for "PLEXOS-comparable."
+Source: fresh runs of `Phase 2 - /Git_Repo/square-peg-quantum-challenge`'s solver code, done 2026-07-22 by calling `solvers.uc.run_uc()` directly with the same setup `main.py` uses (datacenter injection, heat-factor scaling, outage constraints), for every scenario at both `line_losses=False` and `line_losses=True`. Cross-checked on 2026-07-22 against the actual PLEXOS output in `Phase 3 - /Baseline_confirmation/*.xlsx` (V6 workbooks), see the new section below, all four no-battery numbers below are independently confirmed against the PLEXOS model, not just our own repo standing in for "PLEXOS-comparable."
 
 ## Full results table (T=24h, UC solver)
 
@@ -17,9 +17,9 @@ Source: fresh runs of `Phase 2 - /Git_Repo/square-peg-quantum-challenge`'s solve
 | Gen 2 outage (no-batt/PLEXOS, `nobatt_dcbus4_g2out.py`) | off | $257,116.00 | 0.5s |
 | Gen 2 outage (no-batt/PLEXOS) | on | $279,115.23 | 5.0s |
 
-## Confirmed against the PLEXOS side's actual PLEXOS output (V6 workbooks, 2026-07-22)
+## Confirmed against the actual PLEXOS output (V6 workbooks, 2026-07-22)
 
-`Phase 3 - /Baseline_confirmation/` has four V6 workbooks, each with a built-in "Tie-Out Summary" tab comparing the repo's `run_uc()` output directly against the PLEXOS side's PLEXOS model output for the same scenario. This is a genuine independent confirmation, not our own repo's no-battery run standing in for what PLEXOS would say:
+`Phase 3 - /Baseline_confirmation/` has four V6 workbooks, each with a built-in "Tie-Out Summary" tab comparing the repo's `run_uc()` output directly against the PLEXOS model output for the same scenario. This is a genuine independent confirmation, not our own repo's no-battery run standing in for what PLEXOS would say:
 
 | Scenario | Repo cost | PLEXOS cost | Diff | Note |
 |---|---:|---:|---:|---|
@@ -43,7 +43,7 @@ What the tie-out actually checks, beyond total cost: each V6 workbook has four c
 - "Load by Node": per-node hourly load input, confirms the two models are fed the same demand data before any dispatch decision is made.
 - Shadow prices and the resulting congestion on/off pattern are covered by the Tie-Out Summary's "Congestion on/off mismatches" row (0/480 or 5/480 depending on scenario, the mismatches are the same degeneracy hours, not real congestion disagreements).
 
-This directly satisfies Section 6.0's RESULT 2 (PLEXOS baseline comparison) with an actual confirmed number rather than a placeholder, and upgrades the PLEXOS comparison already written into 6.1 from "our repo's no-battery run" to "confirmed exact match against the PLEXOS side's PLEXOS model." The V5 tie-out review (`V5_Tie_Out_Findings_2026-07-18.md`) covers the base-case, no-losses scenario only, done 2026-07-18 before the PLEXOS side delivered the Gen2-off and line-losses variants on 2026-07-21; V6 supersedes it and extends the same confirmed tie-out to all four combinations.
+This directly satisfies Section 6.0's RESULT 2 (PLEXOS baseline comparison) with an actual confirmed number rather than a placeholder, and upgrades the PLEXOS comparison already written into 6.1 from "our repo's no-battery run" to "confirmed exact match against the PLEXOS model." The V5 tie-out review (`V5_Tie_Out_Findings_2026-07-18.md`) covers the base-case, no-losses scenario only, done 2026-07-18 before the Gen2-off and line-losses variants were delivered on 2026-07-21; V6 supersedes it and extends the same confirmed tie-out to all four combinations.
 
 ## Baseline quantum siting result (Section 6.0, RESULT 1), 2026-07-22
 
@@ -77,7 +77,7 @@ Kept from the previous data pull, these used the quantum/classical siting solver
 
 ## Reconciliation: previously-flagged discrepancies, now explained
 
-1. The two 07-21 no-battery UC runs that disagreed by about $22k ($257,116.00 vs $279,115.23): explained. They weren't inconsistent, one was run with the line-losses prompt answered "off," the other "on." The fresh run above confirms both numbers exactly, and both are now independently confirmed against the PLEXOS side's actual PLEXOS V6 output too (see above).
+1. The two 07-21 no-battery UC runs that disagreed by about $22k ($257,116.00 vs $279,115.23): explained. They weren't inconsistent, one was run with the line-losses prompt answered "off," the other "on." The fresh run above confirms both numbers exactly, and both are now independently confirmed against the actual PLEXOS V6 output too (see above).
 2. `contingencies.md`'s stated Gen 2 outage delta (+$29,058.23, +14.7%) didn't match the 07-18 dashboard log ($209,458.35, +5.6%): explained. The 07-18 log predates the 2026-07-21 code change that switched the outage from a partial mid-day trip (hours 14-24) to a full-horizon trip (see the comment header in `4batt_dcbus4_g2out.py`). The fresh run above, on the current code, reproduces `contingencies.md`'s number exactly ($227,343.40); `contingencies.md` was already correct and current, the 07-18 log was simply the pre-update scenario definition. No changes needed to `contingencies.md`.
 
 Bottom line: use the no-line-losses numbers as the primary Section 6.1/6.2 figures (consistent with the paper's stated DC-lossless assumption), the line-losses column is a ready-made robustness/sensitivity note if you want one, and the no-battery/PLEXOS numbers throughout are now backed by an actual confirmed PLEXOS tie-out, not an approximation.

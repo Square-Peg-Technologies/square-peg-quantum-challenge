@@ -8,8 +8,8 @@
 # PLEXOS_FACTORS previously held a curve back-solved from the "Load by Node
 # (Output)" tab of an early, pre-V2 "No Batteries, No Line Losses, Base
 # Case.xlsx" PLEXOS export (flatter, 0.56x-0.99x, peaking at hour 10/20).
-# That export used a different, since-superseded demand shape — the PLEXOS side's
-# PLEXOS output has matched use_cases/ieee14/ieee14.py's DAILY_FACTORS curve
+# That export used a different, since-superseded demand shape — the PLEXOS
+# output has matched use_cases/ieee14/ieee14.py's DAILY_FACTORS curve
 # since the V2 workbook (confirmed 2026-07-14, reconfirmed against V5's
 # "Hourly Load Multipliers" tab 2026-07-18, which is DAILY_FACTORS
 # algebraically renormalized to a 1.0 peak). PLEXOS_FACTORS now mirrors
