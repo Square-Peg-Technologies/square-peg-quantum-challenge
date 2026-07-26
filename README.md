@@ -19,51 +19,61 @@ results detail follow.
 Requires Python 3.12 (any patch version — developed and tested against 3.12.2,
 but nothing here depends on that exact patch release).
 
-Run these commands from inside this repo's root folder (the one containing
-this README) — creating the venv from a parent or sibling directory will
-silently pick up whatever Python that directory falls back to instead of
-this one.
+### Step 1: get a Python 3.12 interpreter
 
-If you already have Python 3.12 installed, use it directly:
+Skip this step entirely if `python3.12 --version` already works.
 
-    python3.12 -m venv .venv
-    .venv/bin/python --version   # must print Python 3.12.x — stop and fix if not
-    .venv/bin/pip install -r requirements.txt
-
-If you don't have Python 3.12 available, on Ubuntu/Debian/Mint the fastest
-fix is a prebuilt package via the deadsnakes PPA (no compiling, works in
-under a minute):
+**Option A — already on Ubuntu/Debian/Mint and don't have 3.12:** prebuilt
+package via the deadsnakes PPA, no compiling, done in under a minute:
 
     sudo apt update && sudo apt install -y software-properties-common
     sudo add-apt-repository ppa:deadsnakes/ppa
     sudo apt update
     sudo apt install python3.12 python3.12-venv
-    python3.12 -m venv .venv
-    .venv/bin/python --version   # must print Python 3.12.x — stop and fix if not
-    .venv/bin/pip install -r requirements.txt
 
-If deadsnakes isn't an option (non-Ubuntu-based distro, or you specifically
-need pyenv's per-project version management), pyenv works too, but it
-**compiles Python from source** — install the full build-dependency list
-first, or it will silently produce a Python missing standard-library pieces
-(e.g. `ModuleNotFoundError: No module named '_ctypes'` the first time
-something needs it, often well after the install finished with no error):
+**Option B — deadsnakes isn't available (non-Ubuntu-based distro, or you
+specifically need pyenv's per-project version management):** pyenv builds
+Python from source, which means it needs these system libraries installed
+*first* — this is a one-time step per machine, not something to repeat on
+every rebuild:
 
     sudo apt install -y build-essential libssl-dev zlib1g-dev libbz2-dev \
       libreadline-dev libsqlite3-dev libncursesw5-dev tk-dev libxml2-dev \
       libxmlsec1-dev libffi-dev liblzma-dev
-    [ -d ~/.pyenv ] || curl https://pyenv.run | bash   # safe to re-run this whole block: skips reinstalling pyenv if it's already there
+
+Then install pyenv and build 3.12.2 with it:
+
+    [ -d ~/.pyenv ] || curl https://pyenv.run | bash   # safe to re-run: skips reinstalling pyenv if it's already there
     exec $SHELL   # reload your shell so the pyenv command is available
-    pyenv install 3.12.2   # if this says the version already exists, run `pyenv uninstall 3.12.2` first, then re-run this line
-    ~/.pyenv/versions/3.12.2/bin/python3.12 -c "import ctypes, bz2, sqlite3, lzma, curses, readline"   # must print nothing/exit 0 — if this errors, a build library wasn't picked up: uninstall (pyenv uninstall 3.12.2), confirm the apt install above ran, and re-run pyenv install
+    pyenv install 3.12.2   # if this says the version already exists but Step 2 can't find it, the build is broken: rm -rf ~/.pyenv/versions/3.12.2 and re-run this line
+    ~/.pyenv/versions/3.12.2/bin/python3.12 -c "import ctypes, bz2, sqlite3, lzma, curses, readline"   # must print nothing/exit 0 — if this errors, a library from the apt install above wasn't picked up: rm -rf ~/.pyenv/versions/3.12.2, confirm the apt install ran, and re-run pyenv install
+
+If this sanity check keeps failing after confirming the `apt install` ran,
+the fix is always the same: delete the broken build and rebuild it —
+`rm -rf ~/.pyenv/versions/3.12.2` then `pyenv install 3.12.2` again. The
+system libraries from the `apt install` step don't need reinstalling; only
+the Python build itself needs redoing.
+
+### Step 2: create the venv and install dependencies
+
+Run these from inside this repo's root folder (the one containing this
+README) — creating the venv from a parent or sibling directory will
+silently pick up whatever Python that directory falls back to instead of
+this one.
+
+If Python 3.12 is on your `PATH` (Option A above, or any other way you got
+it):
+
+    python3.12 -m venv .venv
+    .venv/bin/python --version   # must print Python 3.12.x — stop and fix if not
+    .venv/bin/pip install -r requirements.txt
+
+If you built it with pyenv (Option B above):
+
     pyenv local 3.12.2
     ~/.pyenv/versions/3.12.2/bin/python -m venv .venv
     .venv/bin/python --version   # must print Python 3.12.x — stop and fix if not
     .venv/bin/pip install -r requirements.txt
-
-If you already ran `pyenv install` before installing those libraries, the
-build is broken and needs a clean rebuild — `pyenv uninstall 3.12.2`, then
-re-run `pyenv install 3.12.2` after the `apt install` above.
 
 Always activate the venv or use `.venv/bin/python` explicitly — never system python.
 
