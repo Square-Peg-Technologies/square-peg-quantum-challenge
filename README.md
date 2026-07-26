@@ -55,6 +55,36 @@ from the UI anyway (see the judge-facing build note below); the "Qiskit"
 backend still works fully via qiskit's own `StatevectorSampler`. Add
 `qiskit-aer==0.15.1` back to `requirements.txt` to restore Aer TN.
 
+### qBraid API Key (optional)
+
+Only needed for Quantum Siting's **Sampling** options that route the final
+shot sample through a real qBraid-hosted device — **IonQ (qBraid29sim)**,
+**IonQ (qBraid29sim, noise)**, and **Rigetti (qBraid QPU)**. The default,
+**Local (Qiskit)**, needs no credentials at all — everything stays on your
+machine.
+
+To use any of the qBraid-routed options:
+
+1. Get an API key from [account.qbraid.com](https://account.qbraid.com) (starts with `qbr_`).
+2. Create a file named `.env` in the repo root (never commit this file):
+
+       IONQ_TOKEN=your_qbraid_api_key
+
+   (The variable is named `IONQ_TOKEN` for historical reasons, but it's your
+   general qBraid platform key — the same one authenticates both the IonQ
+   and Rigetti routes; see `solvers/ionq_qbraid_backend.py` and
+   `solvers/rigetti_qbraid_backend.py`.)
+3. `python-dotenv` (already in `requirements.txt`) loads it automatically —
+   no need to `export` it yourself, though an actual environment variable
+   still works too and takes precedence if both are set.
+
+IonQ's qBraid-hosted simulator is free (only real IonQ QPU hardware bills
+credits); Rigetti has no free-simulator route, so every Rigetti sampling run
+bills qBraid credits and queues for real QPU time.
+
+Standalone test scripts for checking this setup directly, outside the
+dashboard/CLI: `scripts/IonQ_test.py`, `scripts/Rigetti_test.py`.
+
 
 ## Running the Tool
 
@@ -119,12 +149,15 @@ statevector and not exposed as a control — Aer Tensor Network (MPS) exists
 in the solver for 36+ qubit cases (ieee30, itself currently hidden — see
 note above) and is otherwise slower on the visible cases. **Sampling** picks
 where the final shot sample comes from: **Local (Qiskit)**, using the same
-simulator that trained the circuit, or **IonQ (qBraid29sim)**/**IonQ
-(qBraid29sim, noise)**, a real qBraid-routed IonQ simulator submission for
-just that final shot sample (free — only real QPU hardware bills credits;
-the noise variant applies the Forte-1 hardware noise model, also free). Any
-mid-run failure pops a warning toast and the traceback lands in the Terminal
-sub-tab.
+simulator that trained the circuit (no credentials needed); **IonQ
+(qBraid29sim)**/**IonQ (qBraid29sim, noise)**, a real qBraid-routed IonQ
+simulator submission for just that final shot sample (free — only real QPU
+hardware bills credits; the noise variant applies the Forte-1 hardware noise
+model, also free); or **Rigetti (qBraid QPU)**, a real Rigetti QCS QPU
+submission for the final shot sample (bills qBraid credits/QCS time — no
+free-simulator route for Rigetti). The two qBraid-routed options need a
+qBraid API key — see "qBraid API Key" under Setup above. Any mid-run failure
+pops a warning toast and the traceback lands in the Terminal sub-tab.
 
 Result caching — every run is recorded with its exact input settings.
 Clicking Run with settings that were already run loads the stored results
@@ -173,6 +206,9 @@ to restore it:
       1. Local (Qiskit) (same simulator used for training)
       2. IonQ via qBraid (real hardware/simulator — free simulator, QPU spends credits)
       3. IonQ via qBraid (Forte-1 noise model — free simulator)
+      4. Rigetti via qBraid (real QPU — bills qBraid credits/QCS time, no free simulator)
+
+    Options 2-4 need a qBraid API key — see "qBraid API Key" under Setup above.
 
     How many candidates to evaluate classically? [default: 10]:
 
@@ -295,7 +331,12 @@ Four levels of power system optimization, all including battery storage dynamics
      simulator used for training. IonQ via qBraid: submits the converged
      circuit for a real final shot sample on qBraid-routed IonQ
      hardware/simulator (training still runs locally either way — Qiskit VQA
-     is compatible with IonQ Forte gate hardware).
+     is compatible with IonQ Forte gate hardware). Rigetti via qBraid:
+     submits the converged circuit to a real Rigetti QCS QPU for the final
+     shot sample — requires client-side transpilation to Rigetti's native
+     gate set and a real qubit-connectivity coupling map before submission,
+     since qBraid's own compilation pipeline doesn't do this automatically
+     for non-IonQ providers (see solvers/rigetti_qbraid_backend.py).
 
 All modes use a DC power flow approximation (lossless branches, no reactive power).
 
@@ -558,7 +599,8 @@ candidate pass/fail outcomes and error messages for post-run diagnosis.
 
 Everything in this repo — ED, UC, Siting MIP, and both VQA backends (Qiskit,
 Aer Tensor Network) — trains on CPU, including when the sampling backend is
-set to IonQ via qBraid (only the final shot sample leaves the machine).
+set to IonQ or Rigetti via qBraid (only the final shot sample leaves the
+machine either way).
 No GPU or CUDA install is required. The Aer Tensor Network (MPS) backend's
 memory scales with entanglement rather than qubit count, which is what lets
 it reach 36+ qubits (ieee30) without needing a GPU-accelerated statevector.
@@ -614,9 +656,15 @@ itself does not depend on T.
   generation/ranking, not final feasibility or cost evaluation.
 - Training always runs on a local simulator (statevector or tensor-network
   MPS) regardless of sampling backend — only the final shot sample can be
-  real, when the sampling backend is set to IonQ via qBraid, submitting to
-  qBraid-routed IonQ hardware/simulator. With the sampling backend left on
-  Local (the default), the entire run stays simulated.
+  real, when the sampling backend is set to IonQ or Rigetti via qBraid,
+  submitting to a qBraid-routed IonQ or Rigetti device. With the sampling
+  backend left on Local (the default), the entire run stays simulated.
+  Rigetti's sparse 2D-grid qubit connectivity doesn't match the VQA
+  ansatz's long-range entanglement pattern, so a Rigetti-backed run needs
+  substantial SWAP-based routing (roughly 15x more two-qubit gates for the
+  ieee14-scale ansatz) — expect noticeably more hardware noise on a Rigetti
+  result than an IonQ one (IonQ's trapped-ion hardware is all-to-all
+  connected, needing no routing at all).
 - ieee30 quantum siting currently has no confirmed Qiskit VQA benchmark
   (Solver Performance table above shows "—" for that cell) — only the Aer
   Tensor Network and classical paths have been timed at that scale. It runs

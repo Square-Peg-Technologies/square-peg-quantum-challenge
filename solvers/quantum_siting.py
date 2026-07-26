@@ -609,7 +609,7 @@ def run_vqa_qiskit(
 
     if phase_times is not None:
         sim_label = "MPS-CPU" if sim_method == "tensor_network" else "CPU"
-        phase_times[f"Aer sampling ({sim_label})"] = _t_sampling[0]
+        phase_times[f"Training sampling ({sim_label})"] = _t_sampling[0]
         phase_times["COBYLA + proxy eval (CPU)"] = max(0.0, t_opt - _t_sampling[0])
         if final_backend in ("ionq_qbraid", "ionq_qbraid_noise"):
             phase_times[f"IonQ (qBraid) final sampling ({final_shots} shots)"] = (
