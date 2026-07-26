@@ -55,7 +55,7 @@ something needs it, often well after the install finished with no error):
     curl https://pyenv.run | bash
     exec $SHELL   # reload your shell so the pyenv command is available
     pyenv install 3.12.2
-    ~/.pyenv/versions/3.12.2/bin/python3.12 -c "import ctypes"   # must print nothing/exit 0 — if this errors, libffi-dev wasn't picked up: uninstall (pyenv uninstall 3.12.2), confirm libffi-dev is installed, and re-run pyenv install
+    ~/.pyenv/versions/3.12.2/bin/python3.12 -c "import ctypes, bz2, sqlite3, lzma, curses, readline"   # must print nothing/exit 0 — if this errors, a build library wasn't picked up: uninstall (pyenv uninstall 3.12.2), confirm the apt install above ran, and re-run pyenv install
     pyenv local 3.12.2
     ~/.pyenv/versions/3.12.2/bin/python -m venv .venv
     .venv/bin/python --version   # must print Python 3.12.x — stop and fix if not
