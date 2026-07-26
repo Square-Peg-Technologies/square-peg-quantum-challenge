@@ -86,26 +86,6 @@ Standalone test scripts for checking this setup directly, outside the
 dashboard/CLI: `scripts/IonQ_test.py`, `scripts/Rigetti_test.py`.
 
 
-## Running the Tool
-
-Two ways to run: the browser dashboard (recommended) or the interactive CLI.
-
-Judge-facing build note: a few use cases, asset files, and controls are
-currently hidden from both the dashboard and the CLI to keep the demo focused
-— none of the underlying code or data was removed, so all of it comes back
-with a one-line change:
-
-    Hidden use cases    ieee30, ieee14_plexos_basecase, pjm5
-                        (only ieee14 is currently selectable)
-    Hidden asset files  4batt_dcbus1.py, 4batt_dcbus2.py, 4batt_dcbus5.py
-    Fixed controls      Battery Siting: Time limit → 600s, Loss re-solve
-                        top-K → 20 (both locked, non-interactive)
-                        Quantum Siting: Candidates → 20, Time limit → 60s
-                        (both locked, non-interactive); Backend dropdown
-                        removed from the UI, fixed to Qiskit
-
-See `_hidden_ucs`/`_HIDDEN_ASSETS` in `dashboard.py` and `_HIDDEN_USE_CASES`/
-`_HIDDEN_ASSETS` in `main.py` to restore any of these.
 
 ### Dashboard (Browser UI)
 
@@ -708,6 +688,26 @@ itself does not depend on T.
   comparison has only been run on ieee14; pjm5 is a test-scale sample and
   ieee30 is deferred to future work on scaling.
 
+## Archived / Not fully tested use cases
+
+Two ways to run: the browser dashboard (recommended) or the interactive CLI.
+
+Judge-facing build note: a few use cases, asset files, and controls are
+currently hidden from both the dashboard and the CLI to keep the demo focused
+— none of the underlying code or data was removed, so all of it comes back
+with a one-line change:
+
+    Hidden use cases    ieee30, ieee14_plexos_basecase, pjm5
+                        (only ieee14 is currently selectable)
+    Hidden asset files  4batt_dcbus1.py, 4batt_dcbus2.py, 4batt_dcbus5.py
+    Fixed controls      Battery Siting: Time limit → 600s, Loss re-solve
+                        top-K → 20 (both locked, non-interactive)
+                        Quantum Siting: Candidates → 20, Time limit → 60s
+                        (both locked, non-interactive); Backend dropdown
+                        removed from the UI, fixed to Qiskit
+
+See `_hidden_ucs`/`_HIDDEN_ASSETS` in `dashboard.py` and `_HIDDEN_USE_CASES`/
+`_HIDDEN_ASSETS` in `main.py` to restore any of these.
 
 ## References
 
