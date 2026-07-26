@@ -140,6 +140,24 @@ qBraid-routed options need a
 qBraid API key — see "qBraid API Key" under Setup above. Any mid-run failure
 pops a warning toast and the traceback lands in the Terminal sub-tab.
 
+**Rigetti queue timeout caveat:** `run_circuit_shots` in
+`solvers/rigetti_qbraid_backend.py` waits on `job.wait_for_final_state(timeout=600, ...)`
+— a 10-minute cap. If the real QCS queue is backed up longer than that (seen
+in practice — e.g. during a scheduled maintenance window), the run raises a
+client-side `TimeoutError` even though the job keeps running and often
+completes successfully on Rigetti's side minutes later. The job isn't lost —
+its ID is in the traceback (`Timeout while waiting for job <id>`), and you
+can look up its status/result directly on qBraid. To recover a result that
+completed after a local timeout, save the job's result JSON (must include
+`resultData.measurementCounts`) and run:
+```
+python scripts/reprocess_rigetti_result.py <assets_file> <result_json_path>
+```
+This replays only the local, free, classical post-processing (bitstring
+ranking + UC/ED evaluation) against the real measurement counts — it does
+not resubmit a job or spend additional credits. See the script's docstring
+for details.
+
 Result caching — every run is recorded with its exact input settings.
 Clicking Run with settings that were already run loads the stored results
 instantly ("✅ Already run — loaded from <timestamp>") instead of re-solving.
@@ -687,6 +705,17 @@ itself does not depend on T.
   `assets/phase3_solver_comparison/phase3_solver_comparison.png` for the full table. This
   comparison has only been run on ieee14; pjm5 is a test-scale sample and
   ieee30 is deferred to future work on scaling.
+- **Update (2026-07-26): real Rigetti QPU results now cover all four ieee14
+  scenarios**, not just the simulator comparison above. IonQ Forte was
+  unavailable this cycle (facility HVAC outage), so the final-shot hardware
+  runs went to Rigetti's Cepheus-1-108Q via qBraid instead. All four
+  scenarios matched or beat the classical baseline (0.000% gap on No DC/DC@
+  bus4/Gen2-outage, -0.052% on heatwave, same early-stop dynamic as the IonQ
+  row). Real QCS queue time varied sharply across runs (12s to 1,787s) —
+  see the `‡` note in the table image below and the "Rigetti queue timeout
+  caveat" note earlier in this README.
+
+  ![Solver comparison table: classical vs. IonQ simulator vs. Rigetti Cepheus-1-108Q QPU, across four ieee14 scenarios](assets/phase3_solver_comparison_table_with_rigetti.png)
 
 ## Archived / Not fully tested use cases
 
