@@ -42,12 +42,18 @@ POWERFLOW_DIR = os.path.join(OUT_DIR, "powerflow")
 SETTINGS_PATH = os.path.join(OUT_DIR, "dashboard_settings.json")
 HISTORY_PATH = os.path.join(OUT_DIR, "dashboard_history.json")
 
+# Battery Siting (MIP)'s "Candidate ranking" table can otherwise show every
+# Benders-explored candidate (100+ rows for larger grids); capping what's
+# rendered keeps tab-switch rendering fast. Full ranking is still saved to
+# outputs/dashboard_history.json regardless of this cap.
+_SITING_TABLE_ROW_CAP = 30
+
 # Short labels so dropdowns don't get cut off. info= renders as inline text
 # under the label (not a tooltip), so these stay to a few words — the full
 # explanations live in the markdown blurb under the Quantum Siting control row.
 BACKEND_CHOICES = ["Qiskit", "Aer TN"]
 BACKEND_INFO = "local sim vs. tensor-network"
-SAMPLING_CHOICES = ["Local", "IonQ (qBraid29sim)", "IonQ (qBraid29sim, noise)"]
+SAMPLING_CHOICES = ["Local (Qiskit)", "IonQ (qBraid29sim)", "IonQ (qBraid29sim, noise)"]
 SAMPLING_INFO = "where the final shot sample runs"
 
 # Old long labels from earlier saved settings → new short labels
@@ -71,6 +77,7 @@ _LABEL_MIGRATION = {
 # Old long IonQ label → current canonical sampling-backend label.
 _SAMPLING_LABEL_MIGRATION = {
     "IonQ (qBraid)": "IonQ (qBraid29sim)",
+    "Local": "Local (Qiskit)",
 }
 
 
@@ -79,7 +86,7 @@ def _default_backend() -> str:
 
 
 def _default_sampling() -> str:
-    return "Local"
+    return "Local (Qiskit)"
 
 
 def _migrate_sampling_label(value, default: str) -> str:
@@ -189,9 +196,16 @@ def list_use_cases() -> list[str]:
     )
 
 
+
+# Asset files hidden from all dropdowns/prompts (judge-facing build); the
+# files themselves are untouched in use_cases/ — remove entries here to
+# bring them back.
+_HIDDEN_ASSETS = {"4batt_dcbus1.py", "4batt_dcbus2.py", "4batt_dcbus5.py"}
+
+
 def list_assets(use_case: str) -> list[str]:
     found = sorted(glob.glob(os.path.join(BASE_DIR, "use_cases", use_case, "*batt*.py")))
-    return [os.path.basename(p) for p in found]
+    return [os.path.basename(p) for p in found if os.path.basename(p) not in _HIDDEN_ASSETS]
 
 
 def _max_hours_for(use_case: str, assets_file: str | None) -> int:
@@ -584,7 +598,7 @@ def run_siting_tab(use_case: str, assets_file: str, T: float, time_limit: float,
                                                      line_losses, loss_top_k))
         if cached is not None:
             summary, text, plots, rec = cached
-            table = pd.DataFrame(rec.get("table_rows", []))
+            table = pd.DataFrame(rec.get("table_rows", [])[:_SITING_TABLE_ROW_CAP])
             return summary, text, plots, table, _history_table()
 
     def solve(grid, assets_mod, loc_mod, dc_bus, dc_mw):
@@ -624,12 +638,17 @@ def run_siting_tab(use_case: str, assets_file: str, T: float, time_limit: float,
         if line_losses and result.uc_result.total_losses_mw:
             summary += f"  \n(losses: {sum(result.uc_result.total_losses_mw):,.1f} MWh, top {loss_top_k} candidates re-solved)"
         if result.ranked:
-            table = pd.DataFrame({
+            full_table = pd.DataFrame({
                 "Rank": list(range(1, len(result.ranked) + 1)),
                 "Buses": [str(bus_tuple) for bus_tuple, _ in result.ranked],
                 "Total cost ($)": [f"{cost:,.0f}" for _, cost in result.ranked],
             })
-            extra = {"table_rows": table.to_dict("records")}
+            # Full ranking (every Benders-explored candidate, can run to 100+
+            # rows) is kept in history for later analysis; only the cheapest
+            # _SITING_TABLE_ROW_CAP are shown here — a Dataframe that large
+            # was visibly slow to paint when switching into this tab.
+            extra = {"table_rows": full_table.to_dict("records")}
+            table = full_table.head(_SITING_TABLE_ROW_CAP)
     history = _finish_run("Siting", use_case, assets_file, T, plain, log_path, plots,
                           key=_siting_key(use_case, assets_file, T, time_limit,
                                           line_losses, loss_top_k),
@@ -708,7 +727,7 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
         sim_method = "tensor_network"
     else:
         raise gr.Error(f"Unknown backend: {backend_label!r}")
-    if sampling_label == "Local":
+    if sampling_label == "Local (Qiskit)":
         final_backend = "local"
     elif sampling_label == "IonQ (qBraid29sim)":
         final_backend = "ionq_qbraid"
@@ -718,7 +737,7 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
         raise gr.Error(f"Unknown sampling backend: {sampling_label!r}")
     second_stage = "ed" if second_stage_label.startswith("ED") else "uc"
     warm_start = warm_start_label.split(" ")[0]
-    backend_tag = backend_label if sampling_label == "Local" else f"{backend_label} → {sampling_label}"
+    backend_tag = backend_label if sampling_label == "Local (Qiskit)" else f"{backend_label} → {sampling_label}"
     _ansatz_map = {"Auto": "auto", "Butterfly": "butterfly", "Linear-chain HEA": "linear_chain"}
     ansatz = _ansatz_map.get(ansatz_label, "auto")
 
@@ -856,7 +875,12 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
 
 def _control_bar(tab: str):
     """Compact one-row control bar: use case, assets, T."""
-    use_cases = list_use_cases()
+    # ieee30, ieee14_plexos_basecase, and pjm5 temporarily hidden from the
+    # dropdown (judge-facing build); all three use cases are untouched in
+    # use_cases/ and list_use_cases() still returns them — remove this
+    # filter to bring them back in the UI.
+    _hidden_ucs = {"ieee30", "ieee14_plexos_basecase", "pjm5"}
+    use_cases = [uc for uc in list_use_cases() if uc not in _hidden_ucs]
     uc_default = _setting(tab, "use_case", use_cases[0] if use_cases else None)
     if uc_default not in use_cases:
         uc_default = use_cases[0] if use_cases else None
@@ -869,7 +893,7 @@ def _control_bar(tab: str):
 
     use_case = gr.Dropdown(choices=use_cases, value=uc_default, label="Use case")
     assets_file = gr.Dropdown(choices=assets, value=assets_default, label="Assets")
-    T = gr.Slider(1, max_hours, value=min(_setting(tab, "T", 4), max_hours), step=1, label="Hours T")
+    T = gr.Slider(1, max_hours, value=min(_setting(tab, "T", 24), max_hours), step=1, label="Hours T")
     use_case.change(_on_use_case_change, inputs=use_case, outputs=[assets_file, T])
     return use_case, assets_file, T
 
@@ -919,7 +943,12 @@ def build_app() -> gr.Blocks:
                 "_Tests the Economic Dispatch / Unit Commitment inner loop in isolation — "
                 "battery placement is fixed to the first 4 nodes here (from each use case's "
                 "locations.py), not optimized. For battery-placement search, use Battery "
-                "Siting (MIP) or Quantum Siting instead._"
+                "Siting (MIP) or Quantum Siting instead._\n\n"
+                "_Assets files: **4batt.py** — base case, 4 batteries, no datacenter load · "
+                "**4batt_dcbus4.py** — adds a 200 MW datacenter at bus 4 · "
+                "**4batt_dcbus4_g2out.py** — same datacenter, plus Generator 2 out for the "
+                "full horizon · **4batt_dcbus4_heatwave.py** — same datacenter, plus a "
+                "heat-wave demand multiplier on the rest of the system._"
             )
             _d0 = _cached_dispatch(d_problem.value, d_uc.value, d_assets.value, d_T.value,
                                    d_losses.value)
@@ -936,18 +965,18 @@ def build_app() -> gr.Blocks:
         with gr.Tab("Battery Siting (MIP)") as st_tab:
             with gr.Row():
                 st_uc, st_assets, st_T = _control_bar("siting")
-                st_limit = gr.Number(value=_setting("siting", "time_limit", 120),
-                                     label="Time limit (s)", scale=0, min_width=130)
+                st_limit = gr.Number(value=600, label="Time limit (s)", scale=0,
+                                     min_width=130, interactive=False)
                 st_losses = gr.Checkbox(value=_setting("siting", "line_losses", False),
                                         label="Line Losses", scale=0, min_width=130)
                 st_loss_topk = gr.Number(value=_setting("siting", "loss_top_k", 10),
-                                         label="Loss re-solve top-K", scale=0, min_width=150)
+                                         label="Loss re-solve top-K", scale=0, min_width=150,
+                                         interactive=False)
                 st_force = gr.Checkbox(value=False, label="Re-run even if cached",
                                        scale=0, min_width=150)
                 st_btn = gr.Button("▶ Run", variant="primary", scale=0, min_width=120)
             gr.Markdown(
-                "_Suggested limits: **pjm5** → 60 s · **ieee14** → 120–300 s · "
-                "**ieee30** → 600–1200 s. "
+                "_Suggested limits: **ieee14** → 120–300 s. "
                 "Benders stops early if optimal; the limit is a safety cap. "
                 "Line Losses keeps the search itself lossless (unchanged speed), then "
                 "re-solves the top-K distinct placements found with losses on and reports "
@@ -972,19 +1001,20 @@ def build_app() -> gr.Blocks:
         with gr.Tab("Quantum Siting") as q_tab:
             with gr.Row():
                 q_uc, q_assets, q_T = _control_bar("quantum")
+                # Backend fixed to Qiskit and hidden from the UI (judge-facing
+                # build) — Aer TN exists for 36+ qubit cases (ieee30, currently
+                # also hidden) and is otherwise slower on the visible cases.
+                # Remove this gr.State and restore the gr.Dropdown above it
+                # (see git history) to bring the control back.
+                q_backend = gr.State("Qiskit")
                 with gr.Column(min_width=200):
-                    q_backend = gr.Dropdown(
-                        BACKEND_CHOICES,
-                        value=_migrate_label(_setting("quantum", "backend", None),
-                                             BACKEND_CHOICES, _default_backend()),
-                        label="Backend", info=BACKEND_INFO)
                     q_sampling = gr.Dropdown(
                         SAMPLING_CHOICES,
                         value=_migrate_sampling_label(_setting("quantum", "sampling", None),
                                                       _default_sampling()),
                         label="Sampling", info=SAMPLING_INFO)
-                q_ncand = gr.Slider(1, 300, value=_setting("quantum", "n_candidates", 10),
-                                    step=1, label="Candidates")
+                q_ncand = gr.Slider(1, 300, value=20, step=1, label="Candidates",
+                                    interactive=False)
                 # 2nd stage fixed to "UC" — no longer user-configurable, dropped
                 # from the UI to shrink this row.
                 q_stage = gr.State("UC")
@@ -999,25 +1029,24 @@ def build_app() -> gr.Blocks:
                 # Hardcoding "Butterfly" literally would silently break that path.
                 q_warm = gr.State("sdp")
                 q_ansatz = gr.State("Auto")
-                q_limit = gr.Number(value=_setting("quantum", "max_time_s", 900),
-                                    label="Time limit (s)", scale=0, min_width=130)
+                q_limit = gr.Number(value=600, label="Time limit (s)", scale=0,
+                                    min_width=130, interactive=False)
                 q_losses = gr.Checkbox(value=_setting("quantum", "line_losses", False),
                                        label="Line Losses", scale=0, min_width=130)
                 q_force = gr.Checkbox(value=False, label="Re-run even if cached",
                                       scale=0, min_width=150)
                 q_btn = gr.Button("▶ Run", variant="primary", scale=0, min_width=120)
             gr.Markdown(
-                "_**Backend**: Qiskit = local CPU statevector · Aer TN = tensor-network "
-                "MPS (scales to 36+ qubits). "
-                "**Sampling**: Local = same simulator as training (free) · "
+                "_**Backend** is fixed to Qiskit (local CPU statevector). "
+                "**Sampling**: Local (Qiskit) = same simulator as training (free) · "
                 "IonQ (qBraid29sim) = real qBraid-routed IonQ simulator for the final "
                 "shot sample (free — only real QPU hardware bills credits) · "
                 "IonQ (qBraid29sim, noise) = same, with the Forte-1 hardware noise model "
                 "applied (also free). "
                 "**2nd stage** is fixed to UC (full re-solve with placement fixed), "
                 "**warm start** to sdp (LP-relaxation warm start), and **ansatz** to "
-                "auto-select (butterfly for Qiskit, linear-chain for Aer TN) — none of "
-                "these three are exposed as controls here anymore._"
+                "auto-select (butterfly for Qiskit) — none of these four are exposed as "
+                "controls here anymore._"
             )
             gr.Markdown(
                 "_Time limit is a safety ceiling, not a target — COBYLA stops on its own "
@@ -1082,9 +1111,12 @@ def build_app() -> gr.Blocks:
                                            label="Selected run — terminal output")
         hist_table.select(_on_history_select, outputs=[hist_term, hist_plots])
 
-        pf_tab.select(lambda: gr.update(visible=False), outputs=hist_section)
-        for _tab in (dispatch_tab, st_tab, q_tab):
-            _tab.select(lambda: gr.update(visible=True), outputs=hist_section)
+        # Power Flow is currently visible=False (unreachable), so hist_section
+        # never actually needs to hide — it used to toggle visible=True/False
+        # on every tab.select, which re-sent the whole (up to 100-row) history
+        # table to the browser on every single tab click. Left permanently
+        # visible instead; restore the toggle here if Power Flow is ever
+        # brought back (see its definition above).
 
         # Wire run buttons (cache-first; history table refreshes on every run)
         d_btn.click(run_dispatch_tab,
@@ -1162,6 +1194,21 @@ label span, .block-label { text-transform: uppercase; letter-spacing: 0.3px;
 /* Tighten vertical rhythm so a run fits on screen */
 .gradio-container .block { padding: 8px 12px; }
 .gradio-container h1 { margin: 4px 0 8px; font-size: 22px; }
+/* Grey out non-interactive number/text inputs (e.g. locked Time limit,
+   Loss re-solve top-K) so they read as disabled instead of plain white. */
+.gradio-container input:disabled, .gradio-container textarea:disabled {
+    background: #e2e8f0 !important; color: #64748b !important;
+    -webkit-text-fill-color: #64748b !important; opacity: 1 !important;
+    cursor: not-allowed !important;
+}
+/* Sliders render a range track + thumb separate from the <input>, so the
+   disabled-input rule above doesn't reach them — grey those out too. */
+.gradio-container input[type=range]:disabled { opacity: 0.5 !important;
+    cursor: not-allowed !important; }
+.gradio-container input[type=range]:disabled::-webkit-slider-thumb {
+    background: #94a3b8 !important; }
+.gradio-container input[type=range]:disabled::-moz-range-thumb {
+    background: #94a3b8 !important; }
 """
 
 # Gradio's frontend only skips its own light/dark auto-detection

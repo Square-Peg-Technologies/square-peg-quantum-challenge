@@ -10,6 +10,16 @@ from solvers.results import UCResult, SitingResult, SitingMIPResult, QuantumSiti
 
 FULL_WEEK_HOURS = 168
 
+# Asset files hidden from the assets prompt (judge-facing build); the files
+# themselves are untouched in use_cases/ — remove entries here to bring
+# them back.
+_HIDDEN_ASSETS = {"4batt_dcbus1.py", "4batt_dcbus2.py", "4batt_dcbus5.py"}
+
+# Use cases hidden from the use-case prompt (judge-facing build); the
+# use_cases/ directories themselves are untouched — remove entries here to
+# bring them back.
+_HIDDEN_USE_CASES = {"ieee30", "ieee14_plexos_basecase", "pjm5"}
+
 
 def extend_to_full_week(grid, hours: int = FULL_WEEK_HOURS) -> None:
     """Cyclically repeat a case's demand/cost profile out to `hours` columns.
@@ -71,9 +81,13 @@ def prompt_use_case() -> tuple[str, str]:
         print("No use_cases/ directory found.")
         sys.exit(1)
 
+    # ieee30 and ieee14_plexos_basecase temporarily hidden from this prompt
+    # (judge-facing build); both use cases are untouched in use_cases/ —
+    # remove entries from _HIDDEN_USE_CASES below to bring them back.
     cases = sorted(
         d for d in os.listdir(base)
         if os.path.isdir(os.path.join(base, d)) and not d.startswith("_")
+        and d not in _HIDDEN_USE_CASES
     )
     if not cases:
         print("No use cases found in use_cases/.")
@@ -171,7 +185,13 @@ def load_use_case(use_case_name: str, use_case_path: str) -> tuple:
 
     Returns (assets_file_name, grid_mod, assets_mod, loc_mod).
     """
-    found = sorted(glob.glob(os.path.join(use_case_path, "*batt*.py")))
+    # Some asset files are hidden from this prompt (judge-facing build); the
+    # files themselves are untouched in use_cases/ — remove entries from
+    # _HIDDEN_ASSETS above to bring them back.
+    found = sorted(
+        p for p in glob.glob(os.path.join(use_case_path, "*batt*.py"))
+        if os.path.basename(p) not in _HIDDEN_ASSETS
+    )
     if not found:
         print(f"No assets files found in {use_case_path}.")
         sys.exit(1)
@@ -238,22 +258,15 @@ def print_header(
 
 def prompt_quantum_options() -> tuple[str, str, int, str, str]:
     """Prompt for sim_method, final_backend, n_candidates, second_stage, warm_start."""
-    while True:
-        print("Select VQA backend (how training runs):")
-        print("  1. Qiskit (statevector simulator)")
-        print("  2. Aer Tensor Network (MPS — scales to 36+ qubits)")
-        raw = input("Enter number: ").strip()
-        if raw == "1":
-            sim_method = "statevector"
-            break
-        elif raw == "2":
-            sim_method = "tensor_network"
-            break
-        print("Invalid selection. Please enter 1 or 2.")
+    # VQA backend prompt hidden (judge-facing build) — Aer TN exists for
+    # 36+ qubit cases (ieee30, currently also hidden) and is otherwise
+    # slower than Qiskit statevector on the visible cases. Restore the loop
+    # below (see git history) to bring the prompt back.
+    sim_method = "statevector"
 
     while True:
         print("Sample final shots on:")
-        print("  1. Local (same simulator used for training)")
+        print("  1. Local (Qiskit) (same simulator used for training)")
         print("  2. IonQ via qBraid (real hardware/simulator — free simulator, QPU spends credits)")
         print("  3. IonQ via qBraid (Forte-1 noise model — free simulator)")
         raw = input("Enter number: ").strip()
