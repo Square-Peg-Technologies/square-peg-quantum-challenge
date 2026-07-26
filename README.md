@@ -16,7 +16,7 @@ results detail follow.
 
 ## Setup
 
-Requires Python 3.11 (any patch version — developed and tested against 3.11.12,
+Requires Python 3.12 (any patch version — developed and tested against 3.12.2,
 but nothing here depends on that exact patch release).
 
 Run these commands from inside this repo's root folder (the one containing
@@ -24,31 +24,36 @@ this README) — creating the venv from a parent or sibling directory will
 silently pick up whatever Python that directory falls back to instead of
 this one.
 
-If you already have Python 3.11 installed, use it directly:
+If you already have Python 3.12 installed, use it directly:
 
-    python3.11 -m venv .venv
-    .venv/bin/python --version   # must print Python 3.11.x — stop and fix if not
+    python3.12 -m venv .venv
+    .venv/bin/python --version   # must print Python 3.12.x — stop and fix if not
     .venv/bin/pip install -r requirements.txt
 
-If you don't have Python 3.11 available, install it with pyenv first:
+If you don't have Python 3.12 available, install it with pyenv first:
 
     curl https://pyenv.run | bash
     exec $SHELL   # reload your shell so the pyenv command is available
-    pyenv install 3.11.12
-    pyenv local 3.11.12
-    ~/.pyenv/versions/3.11.12/bin/python -m venv .venv
-    .venv/bin/python --version   # must print Python 3.11.x — stop and fix if not
+    pyenv install 3.12.2
+    pyenv local 3.12.2
+    ~/.pyenv/versions/3.12.2/bin/python -m venv .venv
+    .venv/bin/python --version   # must print Python 3.12.x — stop and fix if not
     .venv/bin/pip install -r requirements.txt
 
 Always activate the venv or use `.venv/bin/python` explicitly — never system python.
 
-If `pip install` tries to compile `qiskit-aer` or `symengine` from source
-(long CMake/Conan build output instead of downloading a `.whl`), the venv is
-on the wrong Python version — prebuilt wheels only exist for 3.11. Recheck
-`.venv/bin/python --version` and recreate the venv if it's not 3.11.x.
+If `pip install` tries to compile `symengine` from source (long CMake build
+output instead of downloading a `.whl`), the venv is on the wrong Python
+version — recheck `.venv/bin/python --version` and recreate the venv if it's
+not 3.12.x.
 
 All dependencies are contained in this repo — `pip install -r requirements.txt`
-is the whole story.
+is the whole story. `qiskit-aer` was intentionally dropped to keep the
+dependency set minimal — it only accelerated/enabled the Aer Tensor Network
+(MPS) VQA backend for 36+ qubit runs (ieee30), which is currently hidden
+from the UI anyway (see the judge-facing build note below); the "Qiskit"
+backend still works fully via qiskit's own `StatevectorSampler`. Add
+`qiskit-aer==0.15.1` back to `requirements.txt` to restore Aer TN.
 
 
 ## Running the Tool

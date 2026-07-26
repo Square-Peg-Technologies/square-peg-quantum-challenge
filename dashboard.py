@@ -53,7 +53,8 @@ _SITING_TABLE_ROW_CAP = 30
 # explanations live in the markdown blurb under the Quantum Siting control row.
 BACKEND_CHOICES = ["Qiskit", "Aer TN"]
 BACKEND_INFO = "local sim vs. tensor-network"
-SAMPLING_CHOICES = ["Local (Qiskit)", "IonQ (qBraid29sim)", "IonQ (qBraid29sim, noise)"]
+SAMPLING_CHOICES = ["Local (Qiskit)", "IonQ (qBraid29sim)", "IonQ (qBraid29sim, noise)",
+                    "Rigetti (qBraid QPU)"]
 SAMPLING_INFO = "where the final shot sample runs"
 
 # Old long labels from earlier saved settings → new short labels
@@ -733,6 +734,8 @@ def run_quantum_tab(use_case: str, assets_file: str, T: float, backend_label: st
         final_backend = "ionq_qbraid"
     elif sampling_label == "IonQ (qBraid29sim, noise)":
         final_backend = "ionq_qbraid_noise"
+    elif sampling_label == "Rigetti (qBraid QPU)":
+        final_backend = "rigetti_qbraid"
     else:
         raise gr.Error(f"Unknown sampling backend: {sampling_label!r}")
     second_stage = "ed" if second_stage_label.startswith("ED") else "uc"
@@ -1029,7 +1032,7 @@ def build_app() -> gr.Blocks:
                 # Hardcoding "Butterfly" literally would silently break that path.
                 q_warm = gr.State("sdp")
                 q_ansatz = gr.State("Auto")
-                q_limit = gr.Number(value=600, label="Time limit (s)", scale=0,
+                q_limit = gr.Number(value=60, label="Time limit (s)", scale=0,
                                     min_width=130, interactive=False)
                 q_losses = gr.Checkbox(value=_setting("quantum", "line_losses", False),
                                        label="Line Losses", scale=0, min_width=130)
@@ -1042,7 +1045,10 @@ def build_app() -> gr.Blocks:
                 "IonQ (qBraid29sim) = real qBraid-routed IonQ simulator for the final "
                 "shot sample (free — only real QPU hardware bills credits) · "
                 "IonQ (qBraid29sim, noise) = same, with the Forte-1 hardware noise model "
-                "applied (also free). "
+                "applied (also free) · "
+                "Rigetti (qBraid QPU) = final shot sample runs on a real Rigetti QCS QPU "
+                "via qBraid (bills qBraid credits/QCS time — no free-simulator route for "
+                "this one). "
                 "**2nd stage** is fixed to UC (full re-solve with placement fixed), "
                 "**warm start** to sdp (LP-relaxation warm start), and **ansatz** to "
                 "auto-select (butterfly for Qiskit) — none of these four are exposed as "

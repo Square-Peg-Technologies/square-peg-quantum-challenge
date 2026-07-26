@@ -269,6 +269,7 @@ def prompt_quantum_options() -> tuple[str, str, int, str, str]:
         print("  1. Local (Qiskit) (same simulator used for training)")
         print("  2. IonQ via qBraid (real hardware/simulator — free simulator, QPU spends credits)")
         print("  3. IonQ via qBraid (Forte-1 noise model — free simulator)")
+        print("  4. Rigetti via qBraid (real QPU — bills qBraid credits/QCS time, no free simulator)")
         raw = input("Enter number: ").strip()
         if raw == "1":
             final_backend = "local"
@@ -279,7 +280,10 @@ def prompt_quantum_options() -> tuple[str, str, int, str, str]:
         elif raw == "3":
             final_backend = "ionq_qbraid_noise"
             break
-        print("Invalid selection. Please enter 1, 2, or 3.")
+        elif raw == "4":
+            final_backend = "rigetti_qbraid"
+            break
+        print("Invalid selection. Please enter 1, 2, 3, or 4.")
 
     while True:
         raw = input("How many candidates to evaluate classically? [default: 10]: ").strip()
@@ -334,6 +338,7 @@ def print_quantum_results(result: "QuantumSitingResult") -> None:
     _ionq_suffix = {
         "ionq_qbraid": " → IonQ (qBraid29sim)",
         "ionq_qbraid_noise": " → IonQ (qBraid29sim, noise)",
+        "rigetti_qbraid": " → Rigetti (qBraid QPU)",
     }.get(result.final_backend, "")
     backend_label = f"{sim_label}{_ionq_suffix}"
     stage_label = "ED" if result.second_stage == "ed" else "UC"
@@ -612,6 +617,11 @@ def main():
             cost_tag = "free simulator" if DEVICE_ID == FREE_SIMULATOR_ID else "spends qBraid credits"
             print(f"IonQ (qBraid29sim): training locally, final shots on device "
                   f"{DEVICE_ID!r}{noise_tag} (this submits a real job — {cost_tag})")
+        elif final_backend == "rigetti_qbraid":
+            from solvers.rigetti_qbraid_backend import DEVICE_ID
+            print(f"Rigetti (qBraid QPU): training locally, final shots on device "
+                  f"{DEVICE_ID!r} (this submits a real job — bills qBraid credits/QCS time, "
+                  f"no free-simulator route)")
         print(f"Warm-start: {warm_start}")
         result = run_quantum_siting(
             grid=grid,

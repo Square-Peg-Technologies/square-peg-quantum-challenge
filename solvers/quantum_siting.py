@@ -365,15 +365,16 @@ def run_vqa_qiskit(
     """Run COBYLA VQA and return (candidates, convergence_trace, quantum_meta).
 
     final_backend: "local" (default — final shots sampled on the same local
-        Aer/Qiskit sampler used for training) or "ionq_qbraid" (COBYLA
-        training still runs locally for speed/cost, but the final converged
-        circuit is submitted to the qBraid-routed IonQ device — see
-        solvers/ionq_qbraid_backend.py). final_shots is only used in the
-        "ionq_qbraid" case; if None (default), resolves via
-        ionq_qbraid_backend.default_shots(DEVICE_ID) — 5000 on the free
-        simulator, 500 on billed real hardware, so switching DEVICE_ID to
-        Forte 1 doesn't silently also switch to a 5000-shot bill. The local
-        path always uses 5000 shots for the final extraction.
+        Aer/Qiskit sampler used for training), "ionq_qbraid"/"ionq_qbraid_noise"
+        (final converged circuit submitted to the qBraid-routed IonQ device —
+        see solvers/ionq_qbraid_backend.py), or "rigetti_qbraid" (final
+        converged circuit submitted to a real qBraid-routed Rigetti QPU — see
+        solvers/rigetti_qbraid_backend.py). COBYLA training always runs
+        locally regardless of final_backend. final_shots is only used in the
+        qBraid-routed cases; if None (default), resolves via that backend
+        module's default_shots(DEVICE_ID) — 5000 on the IonQ free simulator,
+        500 on billed real IonQ hardware, 100 on the (always billed) Rigetti
+        QPU. The local path always uses 5000 shots for the final extraction.
 
     candidates: list of (u_bits, s_bits, proxy_cost) sorted ascending by proxy_cost.
     convergence_trace: COBYLA objective value at each function evaluation (empty if
@@ -552,6 +553,12 @@ def run_vqa_qiskit(
         counts = run_circuit_shots(final_qc, shots=final_shots,
                                     noisy=(final_backend == "ionq_qbraid_noise"))
         final_shots_used = final_shots
+    elif final_backend == "rigetti_qbraid":
+        from solvers.rigetti_qbraid_backend import run_circuit_shots, default_shots, DEVICE_ID
+        if final_shots is None:
+            final_shots = default_shots(DEVICE_ID)
+        counts = run_circuit_shots(final_qc, shots=final_shots)
+        final_shots_used = final_shots
     elif final_backend == "local":
         final_shots_used = 5000
         job = sampler.run([final_qc], shots=final_shots_used)
@@ -559,7 +566,7 @@ def run_vqa_qiskit(
     else:
         raise ValueError(
             f"Unknown final_backend: {final_backend!r} "
-            "(use 'local', 'ionq_qbraid', or 'ionq_qbraid_noise')"
+            "(use 'local', 'ionq_qbraid', 'ionq_qbraid_noise', or 'rigetti_qbraid')"
         )
 
     # Diagnostic: shot-weighted Hamming-weight histogram of the battery (s)
@@ -604,8 +611,12 @@ def run_vqa_qiskit(
         sim_label = "MPS-CPU" if sim_method == "tensor_network" else "CPU"
         phase_times[f"Aer sampling ({sim_label})"] = _t_sampling[0]
         phase_times["COBYLA + proxy eval (CPU)"] = max(0.0, t_opt - _t_sampling[0])
-        if final_backend == "ionq_qbraid":
+        if final_backend in ("ionq_qbraid", "ionq_qbraid_noise"):
             phase_times[f"IonQ (qBraid) final sampling ({final_shots} shots)"] = (
+                time.perf_counter() - t_final_start
+            )
+        elif final_backend == "rigetti_qbraid":
+            phase_times[f"Rigetti (qBraid) final sampling ({final_shots} shots)"] = (
                 time.perf_counter() - t_final_start
             )
         else:
@@ -809,19 +820,22 @@ def run_quantum_siting(
     T                : number of hours to simulate
     sim_method       : "statevector" | "tensor_network" — how the VQA trains
                        (independent of where the final shots come from)
-    final_backend    : "local" | "ionq_qbraid" — where the final converged
-                       circuit is sampled (independent of sim_method; training
-                       always runs locally either way)
+    final_backend    : "local" | "ionq_qbraid" | "ionq_qbraid_noise" |
+                       "rigetti_qbraid" — where the final converged circuit is
+                       sampled (independent of sim_method; training always
+                       runs locally either way)
     n_candidates     : number of candidates to evaluate classically
     second_stage     : "ed" | "uc"
     warm_start       : "zeros" | "random" | "sdp"
     track_convergence: record COBYLA objective per iteration
     ansatz           : "auto" | "butterfly" | "linear_chain"
-    final_shots      : shot count for the one real qBraid/IonQ submission when
-                       final_backend="ionq_qbraid" (minimum 100). If None
-                       (default), auto-picked by ionq_qbraid_backend.default_shots()
-                       based on DEVICE_ID (5000 on the free simulator, 500 on
-                       billed real hardware). Unused otherwise.
+    final_shots      : shot count for the one real qBraid submission when
+                       final_backend is one of the qBraid-routed values
+                       (minimum 100 for IonQ). If None (default), auto-picked
+                       by that backend module's default_shots() based on
+                       DEVICE_ID (5000 on the IonQ free simulator, 500 on
+                       billed real IonQ hardware, 100 on the Rigetti QPU).
+                       Unused otherwise.
     line_losses      : if True, the quantum sieve and initial classical
                        refinement stay lossless (unchanged), then every
                        already-evaluated candidate (the full n_candidates
@@ -838,13 +852,16 @@ def run_quantum_siting(
                        evaluate_candidates). Same format as run_uc's outages
                        parameter. Defaults to no outages.
 
-    final_backend="ionq_qbraid": COBYLA trains locally regardless of sim_method
-    (submitting each of the ~150+ training iterations to qBraid would be far
-    too slow/costly), then the single converged circuit is submitted to the
-    qBraid-routed IonQ device (solvers/ionq_qbraid_backend.py) for the final
-    shot sample, so the reported result is a real IonQ execution. See that
-    module's DEVICE_ID for the current device (simulator by default; swap to
-    Forte 1 once real QPU account access is sorted).
+    final_backend="ionq_qbraid"/"ionq_qbraid_noise"/"rigetti_qbraid": COBYLA
+    trains locally regardless of sim_method (submitting each of the ~150+
+    training iterations to qBraid would be far too slow/costly), then the
+    single converged circuit is submitted to the qBraid-routed device
+    (solvers/ionq_qbraid_backend.py or solvers/rigetti_qbraid_backend.py) for
+    the final shot sample, so the reported result is a real IonQ/Rigetti
+    execution. See each module's DEVICE_ID for the current device — IonQ
+    defaults to its free simulator (swap to Forte 1 once real QPU account
+    access is sorted); Rigetti's DEVICE_ID is already a real, billed QPU
+    (there is no free-simulator route for Rigetti here).
 
     Returns
     -------
@@ -883,10 +900,10 @@ def run_quantum_siting(
 
     if sim_method not in ("statevector", "tensor_network"):
         raise ValueError(f"Unknown sim_method: {sim_method!r} (use 'statevector' or 'tensor_network')")
-    if final_backend not in ("local", "ionq_qbraid", "ionq_qbraid_noise"):
+    if final_backend not in ("local", "ionq_qbraid", "ionq_qbraid_noise", "rigetti_qbraid"):
         raise ValueError(
             f"Unknown final_backend: {final_backend!r} "
-            "(use 'local', 'ionq_qbraid', or 'ionq_qbraid_noise')"
+            "(use 'local', 'ionq_qbraid', 'ionq_qbraid_noise', or 'rigetti_qbraid')"
         )
 
     # We wrap proxy_fn with feasibility filter via the sieve. The sieve
