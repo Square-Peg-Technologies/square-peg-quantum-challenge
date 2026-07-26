@@ -26,10 +26,18 @@ Targets rigetti:rigetti:qpu:cepheus-1-108q by default — a real QPU, so this
 will queue and bill qBraid credits. Change DEVICE_ID below to a Rigetti
 simulator route instead if you just want to confirm the submit/result flow
 without spending credits or queueing for hardware.
+
+Step 4 builds a small butterfly ansatz (the same circuit shape run_vqa_qiskit
+uses in production, just fewer qubits/layers for a quick/cheap check) and
+submits it through solvers.rigetti_qbraid_backend.run_circuit_shots() itself
+— not a hand-rolled circuit/transpile — so this is a real end-to-end check of
+the exact code path the dashboard/CLI actually use, at only 10 shots.
 """
 
 import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DEVICE_ID = "rigetti:rigetti:qpu:cepheus-1-108q"
 
@@ -103,32 +111,20 @@ def main():
               f"falling back to {rigetti_devices[0].id!r}.")
         device = rigetti_devices[0]
 
-    # --- Step 4: Run a tiny Bell-state test circuit ---
+    # --- Step 4: Run a small butterfly-ansatz circuit through the real
+    #             backend module (same code path production uses) ---
     try:
-        print(f"\nSubmitting a 2-qubit Bell-state test circuit to: {device.id}")
+        from solvers.quantum_siting import build_butterfly_ansatz
+        from solvers.rigetti_qbraid_backend import run_circuit_shots
 
-        from qiskit import QuantumCircuit
+        n_qubits, n_layers = 4, 2
+        qc, params = build_butterfly_ansatz(n_qubits, n_layers)
+        bound = qc.assign_parameters({p: 0.37 for p in params})
 
-        circuit = QuantumCircuit(2, 2)
-        circuit.h(0)
-        circuit.cx(0, 1)
-        circuit.measure([0, 1], [0, 1])
+        print(f"\nSubmitting a {n_qubits}-qubit/{n_layers}-layer butterfly ansatz "
+              f"({len(params)} params, fixed at 0.37) to: {device.id}")
 
-        job = device.run(circuit, shots=200)
-        print(f"✅ Job submitted. Job ID: {job.id}")
-
-        # Real QPU jobs queue — poll status until it reaches a final state
-        # (COMPLETED/FAILED/CANCELLED) instead of grabbing results too early.
-        print(f"Waiting for job to complete (status={job.status()!r})...")
-        job.wait_for_final_state(timeout=600, poll_interval=5)
-        final_status = job.status()
-        print(f"Final status: {final_status!r}")
-        if str(final_status) == "JobStatus.FAILED":
-            print(f"❌ Job failed on the server: {final_status.status_message}")
-            sys.exit(1)
-
-        result = job.result()
-        counts = result.data.get_counts()
+        counts = run_circuit_shots(bound, shots=10, device_id=device.id)
         print(f"✅ Result counts: {counts}")
     except Exception as e:
         print(f"❌ Could not submit/run the test circuit: {e}")
