@@ -4,19 +4,19 @@
 # generator buses/costs all identical — verified against the PLEXOS PTDF
 # sheet to 4 decimal places). The only thing that changes here is the daily
 # demand shape, back-solved from the "Load by Node (Output)" tab of the
-# colleague's "No Batteries, No Line Losses, Base Case.xlsx" PLEXOS export
+# "No Batteries, No Line Losses, Base Case.xlsx" PLEXOS export
 # (each hour's node loads divide out to a clean 2-decimal fraction of the
 # MATPOWER base Pd, e.g. bus 3: 60.29 / 94.2 = 0.6400 at hour 0).
 #
 # Pair with assets.py in this folder (p_min=0 on all generators, 200 MW flat
-# datacenter at bus 4) to reproduce his numbers — see
+# datacenter at bus 4) to reproduce the PLEXOS export's numbers — see
 # docs/plexos_comparison/Comparison_Summary.md for the full writeup.
 
 from dcopf.cases.base import BaseCase, BaseCaseDescription
 import numpy as np
 
 # Hourly factors back-solved from the PLEXOS "Load by Node (Output)" sheet
-# (base Pd x factor = his reported node load, all 14 nodes, all 24 hours).
+# (base Pd x factor = the PLEXOS-reported node load, all 14 nodes, all 24 hours).
 # Contrast with use_cases/ieee14/ieee14.py's DAILY_FACTORS — that curve has
 # a much deeper night valley (0.45x) and a higher midday peak (1.40x); this
 # one is flatter throughout (0.56x-0.99x), peaking earlier (hour 10 vs 13).

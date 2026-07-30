@@ -4,9 +4,9 @@
 # ieee14/assets.py). Originally reverse-engineered from PLEXOS's "Generation
 # by Hour" output — Gen 3 and Gen 4 sitting at exactly 0 MW whenever unused,
 # and Gen 5 running fractional values like 1.88 / 3.8 / 7.62 MW, all below a
-# 20 MW floor — and confirmed directly by Andrew: his PLEXOS baseline runs
-# with no minimum-stable-level constraint, and he's noted that dropping
-# p_min lets the model show more congestion.
+# 20 MW floor — and confirmed directly against the PLEXOS export: the PLEXOS
+# baseline runs with no minimum-stable-level constraint, and dropping p_min
+# lets the model show more congestion.
 #
 # No batteries ("No Batteries" case) — represented as a single zero-power,
 # zero-capacity dummy so the solver's battery arrays aren't empty.

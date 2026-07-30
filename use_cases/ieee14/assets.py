@@ -4,7 +4,7 @@
 # assets_dc_bus{N}.py file from this directory.
 #
 # p_min stays nonzero here (unlike ieee14_plexos_basecase/assets.py, which
-# uses p_min=0 to match Andrew's PLEXOS baseline). solvers/quantum_siting.py's
+# uses p_min=0 to match the PLEXOS baseline). solvers/quantum_siting.py's
 # proxy cost function approximates each generator's commitment cost as
 # cost_a*p_min^2 + cost_b*p_min + cost_c; with cost_a=cost_c=0 here, that
 # collapses to cost_b*p_min, which goes to zero at p_min=0 regardless of

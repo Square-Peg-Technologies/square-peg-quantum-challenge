@@ -2,8 +2,6 @@
 # classes that all case implementation should inherit
 # with name Case and CaseDescription.
 # Nodal Price Project
-# Authors: Laurent El Ghaoui, Fangda Gu
-# (c) EDF Inc. 2020
 #
 # Vendored from the original Nodal Price Project dcopf package: only the
 # grid-topology base classes are needed here (PTDF/Btilde construction from
