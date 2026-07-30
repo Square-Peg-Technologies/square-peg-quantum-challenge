@@ -18,7 +18,7 @@
 #
 # Pair with nobatt_dcbus4.py in this folder (p_min matching PLEXOS's fixed/
 # min-stable-level dispatch, 200 MW flat datacenter at bus 4) to reproduce
-# his numbers.
+# PLEXOS's numbers.
 
 from dcopf.cases.base import BaseCase, BaseCaseDescription
 import numpy as np
